@@ -5,7 +5,9 @@ import * as storage from "./storage.service"
 import * as subscription from "./subscription.service"
 
 /**
+ * =========================
  * CHECK-IN
+ * =========================
  */
 export async function processCheckIn(
   userId: string
@@ -27,12 +29,11 @@ export async function processCheckIn(
       id: crypto.randomUUID(),
       userId,
       userName: validation.user.name,
-      action: "not-applicable",  // Use not-applicable here for expired/invalid
+      action: "not-applicable",
       status: validation.status === "expired" ? "expired" : "invalid",
       timestamp: new Date().toISOString(),
     }
 
-    console.log("Adding scan log (expired/invalid):", log)
     await storage.addScanLog(log)
 
     return {
@@ -42,8 +43,9 @@ export async function processCheckIn(
     }
   }
 
-  // ❌ ALREADY CHECKED IN
-  if (validation.status === "already-checked-in") {
+  // ❌ ALREADY CHECKED IN (SAFETY)
+  const existingSession = await storage.getActiveSessionByUserId(userId)
+  if (existingSession) {
     return {
       success: false,
       message: "User is already checked in",
@@ -69,7 +71,6 @@ export async function processCheckIn(
     timestamp: new Date().toISOString(),
   }
 
-  console.log("Adding scan log (check-in):", log)
   await storage.addScanLog(log)
 
   return {
@@ -80,23 +81,16 @@ export async function processCheckIn(
 }
 
 /**
+ * =========================
  * CHECK-OUT
+ * =========================
  */
 export async function processCheckOut(
   userId: string
 ): Promise<{ success: boolean; message: string; log?: ScanLog }> {
 
-  const user = await storage.getUserById(userId)
-
-  // ❌ INVALID QR
-  if (!user) {
-    return {
-      success: false,
-      message: "Invalid QR Code - User not found",
-    }
-  }
-
-  const session = await storage.endSession(userId)
+  // 🔹 ONLY CARE ABOUT SESSION
+  const session = await storage.getActiveSessionByUserId(userId)
 
   // ❌ NOT CHECKED IN
   if (!session) {
@@ -106,42 +100,52 @@ export async function processCheckOut(
     }
   }
 
+  // 🔹 End session
+  await storage.endSession(userId)
+
   // ✅ SUCCESS LOG
   const log: ScanLog = {
     id: crypto.randomUUID(),
     userId,
-    userName: user.name,
+    userName: session.userName,
     action: "check-out",
     status: "success",
     timestamp: new Date().toISOString(),
   }
 
-  console.log("Adding scan log (check-out):", log)
   await storage.addScanLog(log)
 
   return {
     success: true,
-    message: `Goodbye, ${user.name}!`,
+    message: `Goodbye, ${session.userName}!`,
     log,
   }
 }
 
 /**
- * AUTO IN / OUT
+ * =========================
+ * AUTO IN / OUT (FIXED)
+ * =========================
  */
 export async function processScan(
   userId: string
 ): Promise<{ success: boolean; message: string; log?: ScanLog }> {
 
-  const isCheckedIn = await storage.isUserCheckedIn(userId)
+  // ✅ RULE: SESSION ALWAYS WINS
+  const activeSession = await storage.getActiveSessionByUserId(userId)
 
-  if (isCheckedIn) {
+  if (activeSession) {
     return processCheckOut(userId)
   }
 
   return processCheckIn(userId)
 }
 
+/**
+ * =========================
+ * EXPORT
+ * =========================
+ */
 export const accessService = {
   processCheckIn,
   processCheckOut,
