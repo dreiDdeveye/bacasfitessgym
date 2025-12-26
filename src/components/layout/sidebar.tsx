@@ -1,7 +1,18 @@
 "use client"
 
-import { useState } from "react"
-import { Activity, Users, ScanLine, ClipboardList, BarChart3, ChevronLeft, ChevronRight, LogOut } from "lucide-react"
+import { useState, useEffect } from "react"
+import {
+  Activity,
+  Users,
+  ScanLine,
+  ClipboardList,
+  BarChart3,
+  ChevronLeft,
+  ChevronRight,
+  LogOut,
+  Menu,
+  X,
+} from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 
@@ -21,13 +32,31 @@ const navigation = [
 
 export function Sidebar({ activeTab, onTabChange, onLogout }: SidebarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false)
+  const [isMobileOpen, setIsMobileOpen] = useState(false)
 
-  return (
+  // Close sidebar on window resize if desktop
+  useEffect(() => {
+    function handleResize() {
+      if (window.innerWidth >= 768) {
+        setIsMobileOpen(false)
+      }
+    }
+    window.addEventListener("resize", handleResize)
+    return () => window.removeEventListener("resize", handleResize)
+  }, [])
+
+  const SidebarContent = (
     <div
       className={cn(
-        "bg-card border-r border-border flex flex-col transition-all duration-300",
+        "bg-card border-r border-border flex flex-col transition-all duration-300 h-full",
         isCollapsed ? "w-20" : "w-64",
+        "md:relative fixed md:translate-x-0 top-0 left-0 z-40",
+        isMobileOpen
+          ? "translate-x-0 shadow-lg"
+          : "-translate-x-full md:translate-x-0",
+        "md:shadow-none"
       )}
+      style={{ height: "100vh" }}
     >
       {/* Header */}
       <div className="p-6 border-b border-border flex items-center justify-between">
@@ -37,13 +66,33 @@ export function Sidebar({ activeTab, onTabChange, onLogout }: SidebarProps) {
             <p className="text-sm text-muted-foreground mt-1">Gym Access</p>
           </div>
         )}
-        <Button variant="ghost" size="icon" onClick={() => setIsCollapsed(!isCollapsed)} className="ml-auto">
-          {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => setIsCollapsed(!isCollapsed)}
+          className="ml-auto hidden md:flex"
+          aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+        >
+          {isCollapsed ? (
+            <ChevronRight className="w-4 h-4" />
+          ) : (
+            <ChevronLeft className="w-4 h-4" />
+          )}
+        </Button>
+        {/* Close button for mobile */}
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => setIsMobileOpen(false)}
+          className="ml-auto md:hidden"
+          aria-label="Close sidebar"
+        >
+          <X className="w-5 h-5" />
         </Button>
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 p-4 space-y-2">
+      <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
         {navigation.map((item) => {
           const Icon = item.icon
           const isActive = activeTab === item.id
@@ -51,15 +100,18 @@ export function Sidebar({ activeTab, onTabChange, onLogout }: SidebarProps) {
           return (
             <button
               key={item.id}
-              onClick={() => onTabChange(item.id)}
+              onClick={() => {
+                onTabChange(item.id)
+                setIsMobileOpen(false) // close on mobile after click
+              }}
               className={cn(
                 "w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors",
                 isCollapsed ? "justify-center" : "justify-start",
                 isActive
                   ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
               )}
-              title={isCollapsed ? item.label : ""}
+              title={isCollapsed ? item.label : undefined}
             >
               <Icon className="w-5 h-5 flex-shrink-0" />
               {!isCollapsed && <span className="font-medium">{item.label}</span>}
@@ -81,5 +133,38 @@ export function Sidebar({ activeTab, onTabChange, onLogout }: SidebarProps) {
         </Button>
       </div>
     </div>
+  )
+
+  return (
+    <>
+      {/* Mobile hamburger menu */}
+      <div
+        className={cn(
+          "md:hidden fixed top-4 left-4 z-50 transition-opacity duration-200",
+          isMobileOpen ? "opacity-0 pointer-events-none" : "opacity-100"
+        )}
+      >
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => setIsMobileOpen(true)}
+          aria-label="Open sidebar"
+        >
+          <Menu className="w-6 h-6" />
+        </Button>
+      </div>
+
+      {/* Sidebar */}
+      {SidebarContent}
+
+      {/* Backdrop when sidebar open on mobile */}
+      {isMobileOpen && (
+        <div
+          className="fixed inset-0 bg-black/40 z-30 md:hidden"
+          onClick={() => setIsMobileOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+    </>
   )
 }

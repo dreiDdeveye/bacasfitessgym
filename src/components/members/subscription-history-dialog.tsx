@@ -42,18 +42,18 @@ export function SubscriptionHistoryDialog({ userId, userName, open, onOpenChange
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-full sm:max-w-3xl w-[95vw] sm:w-auto">
         <DialogHeader>
-          <DialogTitle>Subscription History - {userName}</DialogTitle>
+          <DialogTitle className="text-lg sm:text-xl truncate">Subscription History - {userName}</DialogTitle>
         </DialogHeader>
 
         {isLoading ? (
           <p className="text-center py-8 text-muted-foreground">Loading...</p>
         ) : (
-          <div className="space-y-4 max-h-96 overflow-y-auto">
+          <div className="space-y-4 max-h-[60vh] overflow-y-auto px-2 sm:px-0">
             {currentSubscription && (
               <div className="border rounded-lg p-4 bg-primary/5">
-                <div className="flex items-center justify-between mb-2">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-2 gap-2">
                   <h3 className="font-semibold">Current Subscription</h3>
                   <Badge variant={currentSubscription.status === "active" ? "default" : "destructive"}>
                     {currentSubscription.status}
@@ -71,8 +71,8 @@ export function SubscriptionHistoryDialog({ userId, userName, open, onOpenChange
                 <h3 className="font-semibold text-sm text-muted-foreground">Past Subscriptions</h3>
                 {history.map((sub) => (
                   <div key={sub.id} className="border rounded-lg p-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <Badge variant="outline">{sub.status}</Badge>
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-2 gap-2">
+                      <Badge variant="outline" className="whitespace-nowrap">{sub.status}</Badge>
                     </div>
                     <div className="text-sm space-y-1 text-muted-foreground">
                       <p>Start: {format(new Date(sub.startDate), "MMM dd, yyyy")}</p>

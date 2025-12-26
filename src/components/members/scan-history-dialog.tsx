@@ -39,32 +39,37 @@ export function ScanHistoryDialog({ userId, userName, open, onOpenChange }: Scan
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-full sm:max-w-3xl w-[95vw] sm:w-auto">
         <DialogHeader>
-          <DialogTitle>Scan History - {userName}</DialogTitle>
+          <DialogTitle className="text-lg sm:text-xl truncate">Scan History - {userName}</DialogTitle>
         </DialogHeader>
 
         {isLoading ? (
           <p className="text-center py-8 text-muted-foreground">Loading...</p>
         ) : (
-          <div className="space-y-3 max-h-96 overflow-y-auto">
+          <div className="space-y-3 max-h-[60vh] overflow-y-auto px-2 sm:px-0">
             {scanLogs.length > 0 ? (
               scanLogs.map((log) => (
-                <div key={log.id} className="border rounded-lg p-4 flex items-center justify-between">
+                <div
+                  key={log.id}
+                  className="border rounded-lg p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3"
+                >
                   <div className="flex items-center gap-3">
                     {log.action === "check-in" ? (
-                      <LogIn className="w-5 h-5 text-green-500" />
+                      <LogIn className="w-5 h-5 text-green-500 flex-shrink-0" />
                     ) : (
-                      <LogOut className="w-5 h-5 text-blue-500" />
+                      <LogOut className="w-5 h-5 text-blue-500 flex-shrink-0" />
                     )}
                     <div>
                       <p className="font-semibold capitalize">{log.action}</p>
-                      <p className="text-xs text-muted-foreground">
+                      <p className="text-xs text-muted-foreground max-w-xs truncate">
                         {format(new Date(log.timestamp), "MMM dd, yyyy HH:mm:ss")}
                       </p>
                     </div>
                   </div>
-                  <Badge variant={log.status === "success" ? "default" : "destructive"}>{log.status}</Badge>
+                  <Badge variant={log.status === "success" ? "default" : "destructive"} className="whitespace-nowrap">
+                    {log.status}
+                  </Badge>
                 </div>
               ))
             ) : (

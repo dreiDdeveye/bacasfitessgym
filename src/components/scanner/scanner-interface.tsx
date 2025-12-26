@@ -87,12 +87,13 @@ export function ScannerInterface() {
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Responsive Cards: Stack on mobile, side-by-side on desktop */}
         <Card className="p-6 bg-primary/10 border-primary/20">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-muted-foreground">Active Now</p>
-              <p className="text-3xl font-bold text-primary mt-1">{activeSessions}</p>
+              <p className="text-2xl md:text-3xl font-bold text-primary mt-1">{activeSessions}</p>
             </div>
             <Clock className="w-8 h-8 text-primary" />
           </div>
@@ -102,7 +103,7 @@ export function ScannerInterface() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-muted-foreground">Today's Check-ins</p>
-              <p className="text-3xl font-bold text-success mt-1">{todayCheckIns}</p>
+              <p className="text-2xl md:text-3xl font-bold text-success mt-1">{todayCheckIns}</p>
             </div>
             <CheckCircle2 className="w-8 h-8 text-success" />
           </div>
@@ -112,21 +113,22 @@ export function ScannerInterface() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-muted-foreground">Total Members</p>
-              <p className="text-3xl font-bold text-accent mt-1">{totalMembers}</p>
+              <p className="text-2xl md:text-3xl font-bold text-accent mt-1">{totalMembers}</p>
             </div>
             <ScanLine className="w-8 h-8 text-accent" />
           </div>
         </Card>
       </div>
 
-      <Card className="p-8">
-        <div className="flex flex-col items-center justify-center min-h-[400px] space-y-6">
-          <div className={`p-8 rounded-full ${isScanning ? "bg-primary/20 animate-pulse" : "bg-muted"}`}>
-            <ScanLine className={`w-16 h-16 ${isScanning ? "text-primary" : "text-muted-foreground"}`} />
+      {/* Scanner Section: Responsive padding, height, and text/icon sizes */}
+      <Card className="p-4 md:p-8">
+        <div className="flex flex-col items-center justify-center min-h-[300px] md:min-h-[400px] space-y-6">
+          <div className={`p-6 md:p-8 rounded-full ${isScanning ? "bg-primary/20 animate-pulse" : "bg-muted"}`}>
+            <ScanLine className={`w-12 h-12 md:w-16 md:h-16 ${isScanning ? "text-primary" : "text-muted-foreground"}`} />
           </div>
 
           <div className="text-center">
-            <h2 className="text-2xl font-semibold">{isScanning ? "Scanning..." : "Ready to Scan"}</h2>
+            <h2 className="text-xl md:text-2xl font-semibold">{isScanning ? "Scanning..." : "Ready to Scan"}</h2>
             <p className="text-muted-foreground mt-2">Use your USB QR scanner to scan member codes</p>
           </div>
 

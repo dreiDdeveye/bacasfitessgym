@@ -42,20 +42,72 @@ export function BulkImportDialog({
   const [isProcessing, setIsProcessing] = useState(false)
 
   /* ================================
-     CSV TEMPLATE DOWNLOAD
+     DYNAMIC CURRENT MEMBERS CSV DOWNLOAD
   ================================= */
-  const downloadTemplate = () => {
-    const csvContent =
-      "Name,Phone,Email,Subscription Start,Subscription End\n" +
-      "John Doe,09123456789,john@example.com,2025-01-01,2025-02-01\n" +
-      "Jane Smith,09987654321,jane@example.com,2025-01-15,2025-02-15"
+  const downloadCurrentMembers = async () => {
+    setIsProcessing(true)
+    try {
+      const users = await storageService.getUsers()
+      if (!users || users.length === 0) {
+        alert("No members available to download.")
+        return
+      }
 
+      // Build CSV header
+      const header = [
+        "Name",
+        "Phone",
+        "Email",
+        "Subscription Start",
+        "Subscription End",
+      ]
+
+      // Fetch subscriptions for all users in parallel
+      const subscriptions = await Promise.all(
+        users.map((user) => storageService.getSubscriptionByUserId(user.userId))
+      )
+
+      // Compose rows
+      const rows = users.map((user, i) => {
+        const sub = subscriptions[i]
+        const startDate = sub?.startDate || ""
+        const endDate = sub?.endDate || ""
+
+        const escapeCSV = (val: string) =>
+          `"${val.replace(/"/g, '""')}"`
+
+        return [
+          escapeCSV(user.name),
+          escapeCSV(user.phone),
+          escapeCSV(user.email),
+          escapeCSV(startDate),
+          escapeCSV(endDate),
+        ].join(",")
+      })
+
+      const csvContent = header.join(",") + "\n" + rows.join("\n")
+
+      triggerCSVDownload(csvContent, "current-members.csv")
+    } catch (error) {
+      alert(
+        "Failed to download current members CSV: " +
+          (error instanceof Error ? error.message : "Unknown error")
+      )
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
+  /* ================================
+     HELPER: Trigger CSV download
+  ================================= */
+  const triggerCSVDownload = (csvContent: string, filename: string) => {
     const blob = new Blob([csvContent], { type: "text/csv" })
     const url = URL.createObjectURL(blob)
 
     const a = document.createElement("a")
     a.href = url
-    a.download = "bulk-import-template.csv"
+    a.download = filename
     a.click()
 
     URL.revokeObjectURL(url)
@@ -177,7 +229,6 @@ export function BulkImportDialog({
           continue
         }
 
-        /* ✅ FIX: await userId */
         const userId = await storageService.generateUserId()
         const now = new Date().toISOString()
 
@@ -192,7 +243,6 @@ export function BulkImportDialog({
 
         usersToInsert.push(user)
 
-        /* Subscription */
         if (startDate && endDate) {
           await storageService.addOrUpdateSubscription({
             userId,
@@ -211,7 +261,6 @@ export function BulkImportDialog({
         imported++
       }
 
-      /* ✅ Save users AFTER loop */
       if (usersToInsert.length > 0) {
         await storageService.addUsers(usersToInsert)
       }
@@ -270,11 +319,12 @@ export function BulkImportDialog({
 
           <Button
             variant="outline"
-            onClick={downloadTemplate}
+            onClick={downloadCurrentMembers}
             className="w-full bg-transparent"
+            disabled={isProcessing}
           >
             <Download className="w-4 h-4 mr-2" />
-            Download CSV Template
+            Download Current Members CSV
           </Button>
 
           <div className="border-2 border-dashed rounded-lg p-8 text-center">

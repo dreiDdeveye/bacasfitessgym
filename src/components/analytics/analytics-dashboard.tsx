@@ -194,7 +194,7 @@ export function AnalyticsDashboard() {
   return (
     <div className="space-y-6">
       {/* Stats */}
-      <div className="grid md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card>
           <CardHeader>
             <CardDescription>Total Check-ins</CardDescription>
@@ -231,7 +231,7 @@ export function AnalyticsDashboard() {
         <CardContent>
           <div className="overflow-x-auto">
             {/* Hour labels */}
-            <div className="flex mb-2 ml-20">
+            <div className="flex mb-2 ml-20 min-w-[900px]">
               {[...Array(24)].map((_, i) => {
                 const hour24 = (i + 1) % 24
                 const displayHour = hour24 === 0 ? 24 : hour24
@@ -258,7 +258,7 @@ export function AnalyticsDashboard() {
             {/* Days and heatmap cells */}
             {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(
               (day, dayIndex) => (
-                <div key={dayIndex} className="flex items-center mb-2">
+                <div key={dayIndex} className="flex items-center mb-2 min-w-[900px]">
                   <div className="w-20 text-sm font-medium select-none">{day}</div>
 
                   <div className="flex overflow-x-auto">
@@ -273,9 +273,7 @@ export function AnalyticsDashboard() {
                       const ampm = hourForLabel < 12 ? "AM" : "PM"
 
                       const cell = heatmapData.find(
-                        (d) =>
-                          d.day === dayIndex &&
-                          d.hour === hourForLabel
+                        (d) => d.day === dayIndex && d.hour === hourForLabel
                       )
 
                       const maxHeat = Math.max(
@@ -314,13 +312,17 @@ export function AnalyticsDashboard() {
 
       {/* Line Graph with Month Picker and Legend */}
       <Card>
-        <CardHeader>
-          <CardTitle>Active Sessions by Day and Time Pair</CardTitle>
-          <CardDescription>
-            Each line represents a 2-hour pair.
-          </CardDescription>
-          <div className="mt-4">
-            <label htmlFor="monthPicker" className="mr-2 font-semibold">
+        <CardHeader className="flex flex-col md:flex-row md:items-center md:justify-between">
+          <div>
+            <CardTitle>Active Sessions by Day and Time Pair</CardTitle>
+            <CardDescription>Each line represents a 2-hour pair.</CardDescription>
+          </div>
+
+          <div className="mt-4 md:mt-0 flex items-center space-x-2">
+            <label
+              htmlFor="monthPicker"
+              className="mr-2 font-semibold whitespace-nowrap"
+            >
               Select Month:
             </label>
             <select
@@ -337,11 +339,12 @@ export function AnalyticsDashboard() {
             </select>
           </div>
         </CardHeader>
-        <CardContent className="h-[450px] flex">
-          <ResponsiveContainer width="85%" height="100%">
+
+        <CardContent className="h-[450px] flex flex-col md:flex-row">
+          <ResponsiveContainer width="100%" height={400} minWidth={0} minHeight={0}>
             <LineChart
               data={lineData}
-              margin={{ top: 30, right: 40, left: 40, bottom: 60 }}
+              margin={{ top: 30, right: 40, left: 20, bottom: 60 }}
             >
               <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
               <XAxis
@@ -388,7 +391,7 @@ export function AnalyticsDashboard() {
           </ResponsiveContainer>
 
           {/* Legend dropdown */}
-          <div className="w-[15%] ml-4 flex flex-col">
+          <div className="w-full md:w-[15%] mt-4 md:mt-0 md:ml-4 flex flex-col">
             <button
               className="mb-2 px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition"
               onClick={() => setLegendOpen((prev: boolean) => !prev)}

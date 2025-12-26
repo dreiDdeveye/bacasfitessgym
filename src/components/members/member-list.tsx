@@ -139,28 +139,28 @@ export function MemberList({ users, onUpdate }: MemberListProps) {
 
           return (
             <Card key={user.userId} className="p-4">
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <div className="flex items-center gap-3">
-                    <h3 className="font-semibold text-lg">{user.name}</h3>
-                    <Badge variant={active ? "default" : "destructive"}>
+              <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+                <div className="flex-1 min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="font-semibold text-lg truncate">{user.name}</h3>
+                    <Badge variant={active ? "default" : "destructive"} className="whitespace-nowrap">
                       {active ? "Active" : "Expired"}
                     </Badge>
                     {expiring && (
                       <Badge
                         variant="outline"
-                        className="bg-amber-500/10 text-amber-500 border-amber-500/20"
+                        className="bg-amber-500/10 text-amber-500 border-amber-500/20 whitespace-nowrap flex items-center gap-1"
                       >
-                        <AlertTriangle className="w-3 h-3 mr-1" />
+                        <AlertTriangle className="w-3 h-3" />
                         Expiring Soon
                       </Badge>
                     )}
                   </div>
 
-                  <div className="mt-2 space-y-1 text-sm text-muted-foreground">
-                    <p className="font-mono text-primary">{user.userId}</p>
-                    <p>{user.email}</p>
-                    <p>{user.phone}</p>
+                  <div className="mt-2 space-y-1 text-sm text-muted-foreground truncate">
+                    <p className="font-mono text-primary truncate">{user.userId}</p>
+                    <p className="truncate">{user.email}</p>
+                    <p className="truncate">{user.phone}</p>
                     {subscription && (
                       <p className="text-xs">
                         {active ? `${daysLeft} days remaining` : "Subscription expired"}
@@ -169,7 +169,7 @@ export function MemberList({ users, onUpdate }: MemberListProps) {
                   </div>
                 </div>
 
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2 justify-start md:justify-end">
                   <Button
                     size="icon"
                     variant="outline"
@@ -233,7 +233,7 @@ export function MemberList({ users, onUpdate }: MemberListProps) {
       </div>
 
       <Dialog open={showQR} onOpenChange={setShowQR}>
-        <DialogContent>
+        <DialogContent className="max-w-md w-[90vw]">
           <DialogHeader>
             <DialogTitle>QR Code - {selectedUser?.name}</DialogTitle>
           </DialogHeader>
