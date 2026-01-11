@@ -10,7 +10,6 @@ const _geistMono = Geist_Mono({ subsets: ["latin"] })
 export const metadata: Metadata = {
   title: "BaCasFitness - Gym Access System",
   description: "Professional QR code access system for gym member check-in and management",
-  generator: "v0.app",
   icons: {
     icon: [
       {

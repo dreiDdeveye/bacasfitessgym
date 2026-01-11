@@ -30,6 +30,8 @@ export function EditMemberDialog({ user, open, onOpenChange, onMemberUpdated }: 
     name: user?.name || "",
     email: user?.email || "",
     phone: user?.phone || "",
+    heightCm: user?.heightCm?.toString() || "",
+    weightKg: user?.weightKg?.toString() || "",
   })
   const [subscription, setSubscription] = useState<Subscription | null>(null)
   const [subscriptionData, setSubscriptionData] = useState({
@@ -46,6 +48,8 @@ export function EditMemberDialog({ user, open, onOpenChange, onMemberUpdated }: 
         name: user.name,
         email: user.email,
         phone: user.phone,
+        heightCm: user.heightCm?.toString() || "",
+        weightKg: user.weightKg?.toString() || "",
       })
 
       const loadSubscription = async () => {
@@ -123,6 +127,8 @@ export function EditMemberDialog({ user, open, onOpenChange, onMemberUpdated }: 
         name: formData.name.trim(),
         email: formData.email.trim(),
         phone: formData.phone.trim(),
+        heightCm: formData.heightCm ? parseFloat(formData.heightCm) : undefined,
+        weightKg: formData.weightKg ? parseFloat(formData.weightKg) : undefined,
       })
 
       if (subscription) {
@@ -152,7 +158,7 @@ export function EditMemberDialog({ user, open, onOpenChange, onMemberUpdated }: 
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Edit Member Profile</DialogTitle>
         </DialogHeader>
@@ -195,6 +201,36 @@ export function EditMemberDialog({ user, open, onOpenChange, onMemberUpdated }: 
               placeholder="1234567890"
             />
             {errors.phone && <p className="text-sm text-destructive">{errors.phone}</p>}
+          </div>
+
+          {/* Height and Weight */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="heightCm">Height (cm)</Label>
+              <Input
+                id="heightCm"
+                type="number"
+                step="0.1"
+                min="0"
+                max="300"
+                value={formData.heightCm}
+                onChange={(e) => setFormData({ ...formData, heightCm: e.target.value })}
+                placeholder="170"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="weightKg">Weight (kg)</Label>
+              <Input
+                id="weightKg"
+                type="number"
+                step="0.1"
+                min="0"
+                max="500"
+                value={formData.weightKg}
+                onChange={(e) => setFormData({ ...formData, weightKg: e.target.value })}
+                placeholder="70"
+              />
+            </div>
           </div>
 
           <Separator className="my-4" />

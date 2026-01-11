@@ -3,17 +3,26 @@
 import { useState, useEffect } from "react"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { ScanLine, CheckCircle2, XCircle, Clock } from "lucide-react"
+import {
+  ScanLine,
+  CheckCircle2,
+  XCircle,
+  Clock,
+  AlertTriangle,
+  User,
+} from "lucide-react"
 import { useQRScanner } from "@/src/hooks/use-qr-scanner"
 import { accessService } from "@/src/services/access.service"
 import { storageService } from "@/src/services/storage.service"
-import type { ScanLog } from "@/src/types"
+import type { ScanLog, Subscription, User as UserType } from "@/src/types"
 import { playExpiredSound } from "@/src/lib/sound"
 
 type ScanResult = {
   success: boolean
   message: string
   log?: ScanLog
+  subscription?: Subscription | null
+  user?: UserType | null
 }
 
 export function ScannerInterface() {
@@ -22,208 +31,201 @@ export function ScannerInterface() {
   const [todayCheckIns, setTodayCheckIns] = useState(0)
   const [totalMembers, setTotalMembers] = useState(0)
 
-  // -------------------------------
-  // DASHBOARD COUNTERS
-  // -------------------------------
+  /* ---------------- HELPERS ---------------- */
 
-  const updateActiveSessions = async () => {
-    const sessions = await storageService.getActiveSessions()
+  const formatDate = (date?: string) => {
+    if (!date) return "—"
+    return new Date(date).toLocaleDateString("en-PH", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    })
+  }
+
+  const getRemainingDays = (sub?: Subscription | null) => {
+    if (!sub) return 0
+    const diff = new Date(sub.endDate).getTime() - new Date().getTime()
+    return Math.ceil(diff / (1000 * 60 * 60 * 24))
+  }
+
+  const getExpiryStatus = (sub?: Subscription | null) => {
+    if (!sub) return "expired"
+    const days = getRemainingDays(sub)
+    if (days <= 0) return "expired"
+    if (days <= 7) return "soon"
+    return "active"
+  }
+
+  /* ---------------- DASHBOARD ---------------- */
+
+  const updateStats = async () => {
+    const [sessions, logs, users] = await Promise.all([
+      storageService.getActiveSessions(),
+      storageService.getTodayScanLogs(),
+      storageService.getUsers(),
+    ])
+
     setActiveSessions(sessions.length)
-  }
-
-  const updateTodayCheckIns = async () => {
-    const logs = await storageService.getTodayScanLogs()
     setTodayCheckIns(logs.filter((l) => l.action === "check-in").length)
-  }
-
-  const updateTotalMembers = async () => {
-    const users = await storageService.getUsers()
     setTotalMembers(users.length)
   }
 
-  // -------------------------------
-  // HANDLE SCAN (FIXED)
-  // -------------------------------
+  /* ---------------- SCAN ---------------- */
 
   const handleScan = async (code: string) => {
     const result = await accessService.processScan(code)
 
-    // 🔊 Only play expired sound for access denial
-    if (!result.success && result.log?.action === "not-applicable") {
-      playExpiredSound()
+    let subscription: Subscription | null = null
+    let user: UserType | null = null
+
+    if (result.log?.userId) {
+      subscription = await storageService.getSubscriptionByUserId(result.log.userId)
+      user = await storageService.getUserById(result.log.userId)
     }
 
-    setLastScan(result)
-    await updateActiveSessions()
-    await updateTodayCheckIns()
+    if (!result.success) playExpiredSound()
+
+    setLastScan({ ...result, subscription, user })
+    updateStats()
   }
 
   const { isScanning } = useQRScanner(handleScan)
 
-  // -------------------------------
-  // INITIAL LOAD
-  // -------------------------------
+  /* ---------------- FULLSCREEN KIOSK ---------------- */
 
   useEffect(() => {
-    const loadInitialData = async () => {
-      await updateActiveSessions()
-      await updateTodayCheckIns()
-      await updateTotalMembers()
+    const enterFullscreen = () => {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {})
+      }
+      window.removeEventListener("click", enterFullscreen)
     }
-    loadInitialData()
+
+    window.addEventListener("click", enterFullscreen)
+    return () => window.removeEventListener("click", enterFullscreen)
   }, [])
 
-  // -------------------------------
-  // AUTO CLEAR RESULT
-  // -------------------------------
+  /* ---------------- AUTO CLOSE ---------------- */
 
   useEffect(() => {
     if (!lastScan) return
-    const timer = setTimeout(() => setLastScan(null), 5000)
-    return () => clearTimeout(timer)
+    const t = setTimeout(() => setLastScan(null), 5000)
+    return () => clearTimeout(t)
   }, [lastScan])
 
-  // -------------------------------
-  // AUDIO UNLOCK (BROWSER POLICY)
-  // -------------------------------
-
   useEffect(() => {
-    const unlockAudio = () => {
-      const audio = new Audio("/sounds/expired.wav")
-      audio
-        .play()
-        .then(() => {
-          audio.pause()
-          audio.currentTime = 0
-        })
-        .catch(() => {})
-      window.removeEventListener("click", unlockAudio)
-    }
-
-    window.addEventListener("click", unlockAudio)
-    return () => window.removeEventListener("click", unlockAudio)
+    updateStats()
   }, [])
 
-  // -------------------------------
-  // ACTION LABEL + STYLE
-  // -------------------------------
-
-  const renderActionBadge = (log: ScanLog) => {
-    switch (log.action) {
-      case "check-in":
-        return <Badge variant="default">Checked In</Badge>
-      case "check-out":
-        return <Badge variant="secondary">Checked Out</Badge>
-      case "not-applicable":
-        return <Badge variant="destructive">Access Denied</Badge>
-      default:
-        return <Badge variant="outline">Unknown</Badge>
-    }
-  }
-
-  // -------------------------------
-  // UI
-  // -------------------------------
+  /* ================= UI ================= */
 
   return (
     <div className="space-y-6">
       {/* STATS */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card className="p-6 bg-primary/10 border-primary/20">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-muted-foreground">Active Now</p>
-              <p className="text-2xl font-bold text-primary mt-1">{activeSessions}</p>
-            </div>
-            <Clock className="w-8 h-8 text-primary" />
-          </div>
+        <Card className="p-6">
+          <p className="text-sm text-muted-foreground">Active Now</p>
+          <p className="text-2xl font-bold">{activeSessions}</p>
         </Card>
-
-        <Card className="p-6 bg-success/10 border-success/20">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-muted-foreground">Today's Check-ins</p>
-              <p className="text-2xl font-bold text-success mt-1">{todayCheckIns}</p>
-            </div>
-            <CheckCircle2 className="w-8 h-8 text-success" />
-          </div>
+        <Card className="p-6">
+          <p className="text-sm text-muted-foreground">Today's Check-ins</p>
+          <p className="text-2xl font-bold">{todayCheckIns}</p>
         </Card>
-
-        <Card className="p-6 bg-accent/10 border-accent/20">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-muted-foreground">Total Members</p>
-              <p className="text-2xl font-bold text-accent mt-1">{totalMembers}</p>
-            </div>
-            <ScanLine className="w-8 h-8 text-accent" />
-          </div>
+        <Card className="p-6">
+          <p className="text-sm text-muted-foreground">Total Members</p>
+          <p className="text-2xl font-bold">{totalMembers}</p>
         </Card>
       </div>
 
       {/* SCANNER */}
-      <Card className="p-6">
-        <div className="flex flex-col items-center justify-center min-h-[350px] space-y-6">
-          <div
-            className={`p-8 rounded-full ${
-              isScanning ? "bg-primary/20 animate-pulse" : "bg-muted"
-            }`}
-          >
-            <ScanLine
-              className={`w-16 h-16 ${
-                isScanning ? "text-primary" : "text-muted-foreground"
-              }`}
-            />
-          </div>
+      <Card className="p-10 flex flex-col items-center justify-center min-h-[350px]">
+        <div
+          className={`p-10 rounded-full ${
+            isScanning ? "bg-primary/20 animate-pulse" : "bg-muted"
+          }`}
+        >
+          <ScanLine className="w-20 h-20 text-primary" />
+        </div>
+        <h2 className="text-3xl font-bold mt-6">
+          {isScanning ? "Scanning..." : "Ready to Scan"}
+        </h2>
+        <p className="text-muted-foreground mt-2">Present QR Code to Scanner</p>
+      </Card>
 
-          <div className="text-center">
-            <h2 className="text-2xl font-semibold">
-              {isScanning ? "Scanning..." : "Ready to Scan"}
-            </h2>
-            <p className="text-muted-foreground mt-2">
-              Scan a member QR code
-            </p>
-          </div>
+      {/* ================= POPUP ================= */}
+      {lastScan && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm">
+          <Card className="w-full max-w-xl p-8 bg-white rounded-xl shadow-2xl border">
+            <div className="flex gap-6">
+              {/* INFO */}
+              <div className="flex-1">
+                <h2
+                  className={`text-3xl font-bold ${
+                    lastScan.success ? "text-gold-600" : "text-black-600"
+                  }`}
+                >
+                  {lastScan.message}
+                </h2>
 
-          {/* RESULT */}
-          {lastScan && (
-            <Card
-              className={`p-6 w-full max-w-md border-2 ${
-                lastScan.success
-                  ? "bg-success/10 border-success"
-                  : "bg-destructive/10 border-destructive"
-              }`}
-            >
-              <div className="flex gap-4">
-                {lastScan.success ? (
-                  <CheckCircle2 className="w-8 h-8 text-success" />
-                ) : (
-                  <XCircle className="w-8 h-8 text-destructive" />
-                )}
+                <p className="text-lg font-bold mt-1">
+                  {lastScan.user?.name || lastScan.log?.userName || "Unknown User"}
+                </p>
 
-                <div className="flex-1">
-                  <p
-                    className={`font-semibold text-lg ${
-                      lastScan.success ? "text-success" : "text-destructive"
-                    }`}
-                  >
-                    {lastScan.message}
-                  </p>
+                <p className="text-sm text-white-600 ">ID: {lastScan.log?.userId}</p>
 
-                  {lastScan.log && (
-                    <div className="mt-2 space-y-1 text-sm">
-                      <p>{lastScan.log.userName}</p>
-                      <p className="font-mono text-muted-foreground">
-                        {lastScan.log.userId}
-                      </p>
-                      {renderActionBadge(lastScan.log)}
-                    </div>
-                  )}
+                {/* Subscription Type Indicator */}
+                <div className="mt-2">
+                  {(() => {
+                    if (!lastScan.subscription) return null
+
+                    const start = new Date(lastScan.subscription.startDate)
+                    const end = new Date(lastScan.subscription.endDate)
+                    const months =
+                      (end.getFullYear() - start.getFullYear()) * 12 +
+                      (end.getMonth() - start.getMonth())
+
+                    const regularPlans = [1, 3, 6, 12]
+                    const isRegular = regularPlans.includes(months)
+
+                    return (
+                      <Badge
+                        variant={isRegular ? "default" : "outline"}
+                        className={isRegular ? "" : "text-blue-600 border-blue-600"}
+                      >
+                        {isRegular ? "Regular" : "Walk-in"}
+                      </Badge>
+                    )
+                  })()}
+                </div>
+
+                {/* EXPIRY */}
+                <div className="mt-4">
+                  {(() => {
+                    const status = getExpiryStatus(lastScan.subscription)
+                    const days = getRemainingDays(lastScan.subscription)
+
+                    if (status === "expired")
+                      return <Badge variant="destructive">🔴 Expired</Badge>
+
+                    if (status === "soon")
+                      return (
+                        <Badge className="bg-yellow-400 text-black">
+                          🟡 Expiring Soon ({days} days)
+                        </Badge>
+                      )
+
+                    return (
+                      <Badge className="bg-green-600">
+                        🟢 Active — Expires {formatDate(lastScan.subscription?.endDate)}
+                      </Badge>
+                    )
+                  })()}
                 </div>
               </div>
-            </Card>
-          )}
+            </div>
+          </Card>
         </div>
-      </Card>
+      )}
     </div>
   )
 }

@@ -5,6 +5,8 @@ export interface User {
   name: string
   email: string
   phone: string
+  heightCm?: number // Height in centimeters
+  weightKg?: number
   createdAt: string
   updatedAt: string
 }

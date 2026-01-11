@@ -1,10 +1,10 @@
 "use client"
 
 import type React from "react"
-
 import { useState } from "react"
+import Image from "next/image"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { AlertTriangle } from "lucide-react"
@@ -40,53 +40,64 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-50 to-white p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader className="space-y-2">
-          <div>
-            <h1 className="text-3xl text-center font-bold text-primary">BaCasFitness Admin Dashboard</h1>
-            
-          </div>
-          <CardTitle className="text-center">Admin Login</CardTitle>
-          <CardDescription className="text-center">Enter your credentials to access the dashboard</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {error && (
-              <Alert className="bg-red-500/10 border-red-500/20">
-                <AlertTriangle className="h-4 w-4 text-red-500" />
-                <AlertDescription className="text-red-500">{error}</AlertDescription>
-              </Alert>
-            )}
+    <div className="min-h-screen flex flex-col items-center justify-start pt-4 bg-gradient-to-br from-yellow-800 to-black p-4 gap-4">
 
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Email</label>
-              <Input
-                type="email"
-                placeholder="bacasfitnessgym@gmail.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                disabled={isLoading}
-              />
-            </div>
+      {/* BIG CENTERED LOGO */}
+      <Image
+        src="/logo.png"
+        alt="BaCasFitness Logo"
+        width={500}
+        height={500}
+        className="object-contain max-w-full h-auto -mb-28"
+        priority
+      />
 
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Password</label>
-              <Input
-                type="password"
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                disabled={isLoading}
-              />
-            </div>
+      {/* LOGIN CARD */}
+<Card className="w-full max-w-md bg-black/90 shadow-lg rounded-lg">
+  <CardContent className="pt-8 px-8">
+    <form onSubmit={handleSubmit} className="space-y-6">
+      {error && (
+        <Alert className="bg-red-500/20 border-red-500/40">
+          <AlertTriangle className="h-5 w-5 text-red-600" />
+          <AlertDescription className="text-red-600 text-base">{error}</AlertDescription>
+        </Alert>
+      )}
 
-            <Button type="submit" className="w-full" disabled={isLoading}>
-              {isLoading ? "Signing in..." : "Sign In"}
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
+      <div className="space-y-3">
+        <label className="block text-base font-semibold text-white-800">Email</label>
+        <Input
+          type="email"
+          placeholder="bacasfitness@gym.com"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          disabled={isLoading}
+          className="text-lg rounded-md"
+        />
+      </div>
+
+      <div className="space-y-3">
+        <label className="block text-base font-semibold text-white-800">Password</label>
+        <Input
+          type="password"
+          placeholder="••••••••"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          disabled={isLoading}
+          className="text-lg rounded-md"
+        />
+      </div>
+
+      <Button
+        type="submit"
+        className="w-full text-lg font-semibold rounded-md"
+        disabled={isLoading}
+      >
+        {isLoading ? "Signing in..." : "Sign In"}
+      </Button>
+    </form>
+  </CardContent>
+</Card>
+
     </div>
   )
 }

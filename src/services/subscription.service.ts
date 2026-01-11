@@ -3,14 +3,21 @@
 import type { Subscription, AccessValidation } from "@/src/types"
 import * as storage from "./storage.service"
 
-export function isSubscriptionActive(subscription: Subscription | null): boolean {
+/* ================= ACTIVE CHECK ================= */
+export function isSubscriptionActive(
+  subscription: Subscription | null
+): boolean {
   if (!subscription) return false
   const now = new Date()
   const endDate = new Date(subscription.endDate)
   return subscription.status === "active" && endDate >= now
 }
 
-export function createSubscription(userId: string, durationMonths = 1): Subscription {
+/* ================= CREATE SUB ================= */
+export function createSubscription(
+  userId: string,
+  durationMonths = 1
+): Subscription {
   const now = new Date()
   const endDate = new Date(now)
   endDate.setMonth(endDate.getMonth() + durationMonths)
@@ -24,8 +31,12 @@ export function createSubscription(userId: string, durationMonths = 1): Subscrip
   }
 }
 
-export async function validateAccess(userId: string): Promise<AccessValidation> {
+/* ================= VALIDATE ACCESS ================= */
+export async function validateAccess(
+  userId: string
+): Promise<AccessValidation> {
   const user = await storage.getUserById(userId)
+
   if (!user) {
     return {
       isValid: false,
@@ -35,6 +46,7 @@ export async function validateAccess(userId: string): Promise<AccessValidation> 
   }
 
   const subscription = await storage.getSubscriptionByUserId(userId)
+
   if (!isSubscriptionActive(subscription)) {
     return {
       isValid: false,
@@ -56,40 +68,72 @@ export async function validateAccess(userId: string): Promise<AccessValidation> 
   }
 }
 
-export async function renewSubscription(userId: string, durationMonths = 1): Promise<Subscription> {
-  const newSubscription = createSubscription(userId, durationMonths)
-  await storage.addOrUpdateSubscription(newSubscription)
-  return newSubscription
+/* ================= RENEW REGULAR ================= */
+export async function renewSubscription(
+  userId: string,
+  durationMonths = 1
+): Promise<Subscription> {
+  const subscription = createSubscription(userId, durationMonths)
+  await storage.addOrUpdateSubscription(subscription)
+  return subscription
 }
 
-export function getRemainingDays(subscription: Subscription | null): number {
+/* ================= RENEW WALK-IN ================= */
+export async function renewWalkIn(
+  userId: string,
+  endDate: Date
+): Promise<Subscription> {
+  const now = new Date()
+
+  const subscription: Subscription = {
+    userId,
+    startDate: now.toISOString(),
+    endDate: endDate.toISOString(),
+    status: "active",
+    createdAt: now.toISOString(),
+  }
+
+  await storage.addOrUpdateSubscription(subscription)
+  return subscription
+}
+
+/* ================= HELPERS ================= */
+export function getRemainingDays(
+  subscription: Subscription | null
+): number {
   if (!subscription) return 0
   const now = new Date()
   const endDate = new Date(subscription.endDate)
   const diffTime = endDate.getTime() - now.getTime()
-  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
-  return Math.max(0, diffDays)
+  return Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24)))
 }
 
-export function isExpiringSoon(subscription: Subscription | null, daysThreshold = 7): boolean {
+export function isExpiringSoon(
+  subscription: Subscription | null,
+  daysThreshold = 3
+): boolean {
   if (!subscription || subscription.status !== "active") return false
-  const remainingDays = getRemainingDays(subscription)
-  return remainingDays > 0 && remainingDays <= daysThreshold
+  const remaining = getRemainingDays(subscription)
+  return remaining > 0 && remaining <= daysThreshold
 }
 
-export async function getUsersWithExpiringSubs(daysThreshold = 7): Promise<string[]> {
-  const subscriptions = await storage.getSubscriptions()
-  return subscriptions.filter((sub) => isExpiringSoon(sub, daysThreshold)).map((sub) => sub.userId)
+export async function getUsersWithExpiringSubs(
+  daysThreshold = 3
+): Promise<string[]> {
+  const subs = await storage.getSubscriptions()
+  return subs
+    .filter((s) => isExpiringSoon(s, daysThreshold))
+    .map((s) => s.userId)
 }
 
+/* ================= EXPORT ================= */
 export const subscriptionService = {
   isSubscriptionActive,
   createSubscription,
   validateAccess,
   renewSubscription,
+  renewWalkIn,
   getRemainingDays,
   isExpiringSoon,
   getUsersWithExpiringSubs,
 }
-
-export * as subscription from "./subscription.service"

@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import Image from "next/image"
 import {
   Activity,
   Users,
@@ -34,7 +35,6 @@ export function Sidebar({ activeTab, onTabChange, onLogout }: SidebarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [isMobileOpen, setIsMobileOpen] = useState(false)
 
-  // Close sidebar on window resize if desktop
   useEffect(() => {
     function handleResize() {
       if (window.innerWidth >= 768) {
@@ -59,13 +59,26 @@ export function Sidebar({ activeTab, onTabChange, onLogout }: SidebarProps) {
       style={{ height: "100vh" }}
     >
       {/* Header */}
-      <div className="p-6 border-b border-border flex items-center justify-between">
+      <div className="p-6 border-b border-border flex items-center gap-3">
         {!isCollapsed && (
-          <div>
-            <h1 className="text-2xl font-bold text-primary">BaCasFitness</h1>
-            <p className="text-sm text-muted-foreground mt-1">Gym Access</p>
-          </div>
+          <>
+            {/* Logo */}
+            <Image
+              src="/icon-dark-32x32.png"
+              alt="BaCasFitness Logo"
+              width={32}
+              height={32}
+              className="shrink-0"
+            />
+
+            {/* Text */}
+            <div>
+              <h1 className="text-2xl font-bold text-primary">BaCasFitness</h1>
+              <p className="text-sm text-muted-foreground mt-1">Gym Access</p>
+            </div>
+          </>
         )}
+
         <Button
           variant="ghost"
           size="icon"
@@ -79,6 +92,7 @@ export function Sidebar({ activeTab, onTabChange, onLogout }: SidebarProps) {
             <ChevronLeft className="w-4 h-4" />
           )}
         </Button>
+
         {/* Close button for mobile */}
         <Button
           variant="ghost"
@@ -102,7 +116,7 @@ export function Sidebar({ activeTab, onTabChange, onLogout }: SidebarProps) {
               key={item.id}
               onClick={() => {
                 onTabChange(item.id)
-                setIsMobileOpen(false) // close on mobile after click
+                setIsMobileOpen(false)
               }}
               className={cn(
                 "w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors",
@@ -121,7 +135,7 @@ export function Sidebar({ activeTab, onTabChange, onLogout }: SidebarProps) {
       </nav>
 
       {/* Footer */}
-      <div className="p-4 border-t border-border space-y-4">
+      <div className="p-4 border-t border-border">
         <Button
           variant="outline"
           size={isCollapsed ? "icon" : "sm"}
@@ -154,15 +168,12 @@ export function Sidebar({ activeTab, onTabChange, onLogout }: SidebarProps) {
         </Button>
       </div>
 
-      {/* Sidebar */}
       {SidebarContent}
 
-      {/* Backdrop when sidebar open on mobile */}
       {isMobileOpen && (
         <div
           className="fixed inset-0 bg-black/40 z-30 md:hidden"
           onClick={() => setIsMobileOpen(false)}
-          aria-hidden="true"
         />
       )}
     </>

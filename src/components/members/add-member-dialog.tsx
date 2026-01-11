@@ -7,7 +7,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import type { User } from "@/src/types"
 import { storageService } from "@/src/services/storage.service"
 import { QRCodeDisplay } from "../qr/qr-code-display"
@@ -29,28 +35,46 @@ const subscriptionPlans = [
 export function AddMemberDialog({ open, onOpenChange, onMemberAdded }: AddMemberDialogProps) {
   const [step, setStep] = useState<"form" | "qr">("form")
   const [newUser, setNewUser] = useState<User | null>(null)
+  const [subscriptionType, setSubscriptionType] = useState<"regular" | "walkin">("regular")
   const [formData, setFormData] = useState({
     name: "",
     email: "",
     phone: "",
+    heightCm: "",
+    weightKg: "",
     subscriptionPlan: "1",
     startDate: format(new Date(), "yyyy-MM-dd"),
     endDate: format(addMonths(new Date(), 1), "yyyy-MM-dd"),
   })
 
+  // Update endDate automatically ONLY if subscription type is regular
   useEffect(() => {
-    const plan = subscriptionPlans.find((p) => p.value === formData.subscriptionPlan)
-    if (plan) {
-      const start = new Date(formData.startDate)
-      const end = addMonths(start, plan.months)
-      setFormData((prev) => ({ ...prev, endDate: format(end, "yyyy-MM-dd") }))
+    if (subscriptionType === "regular") {
+      const plan = subscriptionPlans.find((p) => p.value === formData.subscriptionPlan)
+      if (plan) {
+        const start = new Date(formData.startDate)
+        const end = addMonths(start, plan.months)
+        setFormData((prev) => ({ ...prev, endDate: format(end, "yyyy-MM-dd") }))
+      }
     }
-  }, [formData.subscriptionPlan, formData.startDate])
+  }, [formData.subscriptionPlan, formData.startDate, subscriptionType])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
     try {
+      // Basic validation for walk-in dates
+      if (subscriptionType === "walkin") {
+        if (!formData.startDate || !formData.endDate) {
+          alert("Please select subscription start and end dates.")
+          return
+        }
+        if (new Date(formData.startDate) > new Date(formData.endDate)) {
+          alert("Start date cannot be after end date.")
+          return
+        }
+      }
+
       // Generate user ID
       const userId = await storageService.generateUserId()
       const now = new Date().toISOString()
@@ -61,6 +85,8 @@ export function AddMemberDialog({ open, onOpenChange, onMemberAdded }: AddMember
         name: formData.name,
         email: formData.email,
         phone: formData.phone,
+        heightCm: formData.heightCm ? parseFloat(formData.heightCm) : undefined,
+        weightKg: formData.weightKg ? parseFloat(formData.weightKg) : undefined,
         createdAt: now,
         updatedAt: now,
       }
@@ -88,10 +114,13 @@ export function AddMemberDialog({ open, onOpenChange, onMemberAdded }: AddMember
   const handleClose = () => {
     setStep("form")
     setNewUser(null)
+    setSubscriptionType("regular")
     setFormData({
       name: "",
       email: "",
       phone: "",
+      heightCm: "",
+      weightKg: "",
       subscriptionPlan: "1",
       startDate: format(new Date(), "yyyy-MM-dd"),
       endDate: format(addMonths(new Date(), 1), "yyyy-MM-dd"),
@@ -104,12 +133,14 @@ export function AddMemberDialog({ open, onOpenChange, onMemberAdded }: AddMember
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
         {step === "form" ? (
           <>
             <DialogHeader>
               <DialogTitle>Add New Member</DialogTitle>
-              <DialogDescription>Enter member details to generate their unique ID and QR code.</DialogDescription>
+              <DialogDescription>
+                Enter member details to generate their unique ID and QR code.
+              </DialogDescription>
             </DialogHeader>
 
             <form onSubmit={handleSubmit} className="space-y-4">
@@ -148,41 +179,119 @@ export function AddMemberDialog({ open, onOpenChange, onMemberAdded }: AddMember
                 />
               </div>
 
+              {/* Height and Weight */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="heightCm">Height (cm)</Label>
+                  <Input
+                    id="heightCm"
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    max="300"
+                    value={formData.heightCm}
+                    onChange={(e) => setFormData({ ...formData, heightCm: e.target.value })}
+                    placeholder="170"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="weightKg">Weight (kg)</Label>
+                  <Input
+                    id="weightKg"
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    max="500"
+                    value={formData.weightKg}
+                    onChange={(e) => setFormData({ ...formData, weightKg: e.target.value })}
+                    placeholder="70"
+                  />
+                </div>
+              </div>
+
+              {/* Subscription Type */}
               <div className="space-y-2">
-                <Label htmlFor="subscriptionPlan">Subscription Plan</Label>
+                <Label htmlFor="subscriptionType">Subscription Type</Label>
                 <Select
-                  value={formData.subscriptionPlan}
-                  onValueChange={(value) => setFormData({ ...formData, subscriptionPlan: value })}
+                  value={subscriptionType}
+                  onValueChange={(value) => setSubscriptionType(value as "regular" | "walkin")}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Select plan" />
+                    <SelectValue placeholder="Select subscription type" />
                   </SelectTrigger>
                   <SelectContent>
-                    {subscriptionPlans.map((plan) => (
-                      <SelectItem key={plan.value} value={plan.value}>
-                        {plan.label}
-                      </SelectItem>
-                    ))}
+                    <SelectItem value="regular">Regular</SelectItem>
+                    <SelectItem value="walkin">Walk-in (Custom Dates)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="startDate">Start Date</Label>
-                  <Input
-                    id="startDate"
-                    type="date"
-                    value={formData.startDate}
-                    onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
-                    required
-                  />
+              {/* If normal, show plan + auto dates */}
+              {subscriptionType === "regular" && (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="subscriptionPlan">Subscription Plan</Label>
+                    <Select
+                      value={formData.subscriptionPlan}
+                      onValueChange={(value) => setFormData({ ...formData, subscriptionPlan: value })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select plan" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {subscriptionPlans.map((plan) => (
+                          <SelectItem key={plan.value} value={plan.value}>
+                            {plan.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="startDate">Start Date</Label>
+                      <Input
+                        id="startDate"
+                        type="date"
+                        value={formData.startDate}
+                        onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
+                        required
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="endDate">End Date</Label>
+                      <Input id="endDate" type="date" value={formData.endDate} disabled className="bg-muted" />
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* If walk-in, show manual start/end date inputs */}
+              {subscriptionType === "walkin" && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="walkinStartDate">Start Date</Label>
+                    <Input
+                      id="walkinStartDate"
+                      type="date"
+                      value={formData.startDate}
+                      onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="walkinEndDate">End Date</Label>
+                    <Input
+                      id="walkinEndDate"
+                      type="date"
+                      value={formData.endDate}
+                      onChange={(e) => setFormData({ ...formData, endDate: e.target.value })}
+                      required
+                    />
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="endDate">End Date</Label>
-                  <Input id="endDate" type="date" value={formData.endDate} disabled className="bg-muted" />
-                </div>
-              </div>
+              )}
 
               <div className="flex justify-end gap-3 pt-4">
                 <Button type="button" variant="outline" onClick={handleClose}>
@@ -210,9 +319,25 @@ export function AddMemberDialog({ open, onOpenChange, onMemberAdded }: AddMember
                     <span className="text-muted-foreground">Name:</span>
                     <span className="font-medium">{newUser.name}</span>
                   </div>
+                  {newUser.heightCm && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Height:</span>
+                      <span className="font-medium">{newUser.heightCm} cm</span>
+                    </div>
+                  )}
+                  {newUser.weightKg && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Weight:</span>
+                      <span className="font-medium">{newUser.weightKg} kg</span>
+                    </div>
+                  )}
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">Subscription:</span>
-                    <span className="font-medium text-success">{selectedPlan?.label} Active</span>
+                    <span className="font-medium text-success">
+                      {subscriptionType === "regular"
+                        ? selectedPlan?.label + " Active"
+                        : "Walk-in (Custom Dates)"}
+                    </span>
                   </div>
                 </div>
 

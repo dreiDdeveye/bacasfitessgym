@@ -68,16 +68,6 @@ function App() {
 
       <main className="flex-1 overflow-auto">
         <div className="container mx-auto p-8 max-w-6xl">
-          {expiringCount > 0 && activeTab === "members" && (
-            <Alert className="mb-6 bg-amber-500/10 border-amber-500/20">
-              <AlertTriangle className="h-4 w-4 text-amber-500" />
-              <AlertDescription className="text-amber-500">
-                <strong>{expiringCount}</strong> member{expiringCount > 1 ? "s have" : " has"} subscription
-                {expiringCount > 1 ? "s" : ""} expiring within 7 days
-              </AlertDescription>
-            </Alert>
-          )}
-
           <div className="flex items-center justify-between mb-8">
             <div>
               <h1 className="text-3xl font-bold">

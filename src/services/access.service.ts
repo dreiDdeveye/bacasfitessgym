@@ -117,7 +117,7 @@ export async function processCheckOut(
 
   return {
     success: true,
-    message: `Goodbye, ${session.userName}!`,
+    message: `See you Soon, ${session.userName}!`,
     log,
   }
 }

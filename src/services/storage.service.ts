@@ -31,6 +31,8 @@ export async function getUsers(): Promise<User[]> {
     name: user.name,
     email: user.email,
     phone: user.phone,
+    heightCm: user.height_cm,
+    weightKg: user.weight_kg,
     createdAt: user.created_at,
     updatedAt: user.updated_at,
   }))
@@ -50,6 +52,8 @@ export async function getUserById(userId: string): Promise<User | null> {
     name: data.name,
     email: data.email,
     phone: data.phone,
+    heightCm: data.height_cm,
+    weightKg: data.weight_kg,
     createdAt: data.created_at,
     updatedAt: data.updated_at,
   }
@@ -62,6 +66,8 @@ export async function addUser(user: User): Promise<void> {
       name: user.name,
       email: user.email,
       phone: user.phone,
+      height_cm: user.heightCm || null,
+      weight_kg: user.weightKg || null,
       created_at: user.createdAt,
       updated_at: user.updatedAt,
     },
@@ -74,14 +80,19 @@ export async function updateUser(
   userId: string,
   updates: Partial<User>,
 ): Promise<void> {
+  const updateData: Record<string, unknown> = {
+    updated_at: new Date().toISOString(),
+  }
+
+  if (updates.name !== undefined) updateData.name = updates.name
+  if (updates.email !== undefined) updateData.email = updates.email
+  if (updates.phone !== undefined) updateData.phone = updates.phone
+  if (updates.heightCm !== undefined) updateData.height_cm = updates.heightCm || null
+  if (updates.weightKg !== undefined) updateData.weight_kg = updates.weightKg || null
+
   const { error } = await supabase
     .from("users")
-    .update({
-      ...(updates.name && { name: updates.name }),
-      ...(updates.email && { email: updates.email }),
-      ...(updates.phone && { phone: updates.phone }),
-      updated_at: new Date().toISOString(),
-    })
+    .update(updateData)
     .eq("user_id", userId)
 
   if (error) console.error("Error updating user:", error)
@@ -408,6 +419,8 @@ export async function addUsers(users: User[]): Promise<void> {
       name: u.name,
       email: u.email,
       phone: u.phone,
+      height_cm: u.heightCm || null,
+      weight_kg: u.weightKg || null,
       created_at: u.createdAt,
       updated_at: u.updatedAt,
     })),
