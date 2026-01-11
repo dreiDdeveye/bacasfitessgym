@@ -31,6 +31,7 @@ import {
   startOfMonth,
   endOfMonth,
   startOfWeek as getStartOfWeek,
+  getDaysInMonth,
 } from "date-fns"
 import type { ScanLog } from "@/src/types"
 import { storageService } from "@/src/services/storage.service"
@@ -199,6 +200,14 @@ export function AnalyticsDashboard() {
   const [weeklyBreakdown, setWeeklyBreakdown] = useState<{ label: string; value: number }[]>([])
   const [last7DaysData, setLast7DaysData] = useState<number[]>([])
   const [hourlyDistribution, setHourlyDistribution] = useState<number[]>([])
+  
+  // Time-range specific data
+  const [filteredPeakHour, setFilteredPeakHour] = useState<number | null>(null)
+  const [filteredQuietestHour, setFilteredQuietestHour] = useState<number | null>(null)
+  const [filteredBusiestDay, setFilteredBusiestDay] = useState<number | null>(null)
+  const [filteredWeeklyBreakdown, setFilteredWeeklyBreakdown] = useState<{ label: string; value: number }[]>([])
+  const [filteredHourlyDistribution, setFilteredHourlyDistribution] = useState<number[]>([])
+  const [filteredAvgDaily, setFilteredAvgDaily] = useState(0)
 
   useEffect(() => {
     loadAnalytics()
@@ -210,6 +219,117 @@ export function AnalyticsDashboard() {
       generateContributionData(selectedYear)
     }
   }, [allValidLogs, selectedMonth, selectedYear])
+
+  // Update filtered stats when time range changes
+  useEffect(() => {
+    if (allValidLogs.length === 0) return
+    
+    const now = new Date()
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const thisMonthStart = startOfMonth(now)
+    const thisWeekStart = getStartOfWeek(now, { weekStartsOn: 0 })
+    const yearStart = startOfYear(now)
+    
+    // Filter logs based on time range
+    let filteredLogs: ScanLog[] = []
+    let daysInRange = 1
+    
+    switch (timeRange) {
+      case "today":
+        filteredLogs = allValidLogs.filter(l => new Date(l.timestamp) >= todayStart)
+        daysInRange = 1
+        break
+      case "week": {
+        filteredLogs = allValidLogs.filter(l => new Date(l.timestamp) >= thisWeekStart)
+        // Week always has 7 days
+        daysInRange = 7
+        break
+      }
+      case "month": {
+        filteredLogs = allValidLogs.filter(l => new Date(l.timestamp) >= thisMonthStart)
+        // Get total days in current month (28/29/30/31)
+        daysInRange = getDaysInMonth(now)
+        break
+      }
+      case "year": {
+        filteredLogs = allValidLogs.filter(l => new Date(l.timestamp) >= yearStart)
+        // 12 months in a year (for monthly average)
+        daysInRange = 12
+        break
+      }
+      case "all":
+      default:
+        filteredLogs = allValidLogs
+        // Use 365 days for "all time" average
+        daysInRange = 365
+        break
+    }
+    
+    // Ensure daysInRange is at least 1
+    daysInRange = Math.max(1, daysInRange)
+    
+    // Calculate peak hour for filtered range
+    const hourMap = new Map<number, number>()
+    filteredLogs.forEach((log) => {
+      const date = new Date(log.timestamp)
+      if (isNaN(date.getTime())) return
+      const hour = getHours(date)
+      hourMap.set(hour, (hourMap.get(hour) || 0) + 1)
+    })
+    
+    let maxHour: number | null = null
+    let maxCount = 0
+    let minHour: number | null = null
+    let minCount = Infinity
+    
+    hourMap.forEach((count, hour) => {
+      if (count > maxCount) {
+        maxCount = count
+        maxHour = hour
+      }
+      if (hour >= 5 && hour <= 23 && count < minCount && count > 0) {
+        minCount = count
+        minHour = hour
+      }
+    })
+    setFilteredPeakHour(maxHour)
+    setFilteredQuietestHour(minHour)
+    
+    // Hourly distribution for filtered range
+    const hourlyData = Array.from({ length: 24 }, (_, i) => hourMap.get(i) || 0)
+    setFilteredHourlyDistribution(hourlyData)
+    
+    // Busiest day for filtered range
+    const dayMap = new Map<number, number>()
+    filteredLogs.forEach((log) => {
+      const date = new Date(log.timestamp)
+      if (isNaN(date.getTime())) return
+      const day = getDay(date)
+      dayMap.set(day, (dayMap.get(day) || 0) + 1)
+    })
+    
+    let maxDay: number | null = null
+    let maxDayCount = 0
+    dayMap.forEach((count, day) => {
+      if (count > maxDayCount) {
+        maxDayCount = count
+        maxDay = day
+      }
+    })
+    setFilteredBusiestDay(maxDay)
+    
+    // Weekly breakdown for filtered range
+    const weekBreakdown = DAY_SHORT.map((label, i) => ({
+      label,
+      value: dayMap.get(i) || 0
+    }))
+    setFilteredWeeklyBreakdown(weekBreakdown)
+    
+    // Average daily for filtered range
+    const avgDaily = Math.round(filteredLogs.length / daysInRange)
+    setFilteredAvgDaily(avgDaily)
+    
+  }, [timeRange, allValidLogs])
 
   async function loadAnalytics() {
     const logs = await storageService.getScanLogs()
@@ -566,7 +686,7 @@ export function AnalyticsDashboard() {
                 <Users className="w-3.5 h-3.5" />
                 Check-ins
               </CardDescription>
-              <Sparkline data={last7DaysData} />
+              <Sparkline data={timeRange === "all" ? last7DaysData : filteredHourlyDistribution.length ? last7DaysData : []} />
             </div>
             <CardTitle className="text-3xl font-bold tracking-tight">{getDisplayCount()}</CardTitle>
           </CardHeader>
@@ -592,17 +712,17 @@ export function AnalyticsDashboard() {
                 <Clock className="w-3.5 h-3.5" />
                 Peak Hour
               </CardDescription>
-              <Sparkline data={hourlyDistribution} color="#f59e0b" />
+              <Sparkline data={filteredHourlyDistribution.length ? filteredHourlyDistribution : hourlyDistribution} color="#f59e0b" />
             </div>
             <CardTitle className="text-3xl font-bold tracking-tight">
-              {peakHour !== null ? formatHourLabel(peakHour) : "N/A"}
+              {filteredPeakHour !== null ? formatHourLabel(filteredPeakHour) : (peakHour !== null ? formatHourLabel(peakHour) : "N/A")}
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-0">
-            {previousPeakHour !== null && peakHour !== null && peakHour !== previousPeakHour ? (
+            {previousPeakHour !== null && filteredPeakHour !== null && filteredPeakHour !== previousPeakHour ? (
               <span className="text-[11px] text-amber-500 flex items-center gap-1">
                 <Activity className="w-3 h-3" />
-                Shifted from {formatHourLabel(previousPeakHour)}
+                Different from last month ({formatHourLabel(previousPeakHour)})
               </span>
             ) : (
               <span className="text-[11px] text-muted-foreground flex items-center gap-1">
@@ -610,7 +730,7 @@ export function AnalyticsDashboard() {
               </span>
             )}
             <p className="text-[10px] text-muted-foreground mt-1.5 leading-tight">
-              Most active check-in time
+              Most active check-in time ({timeRange})
             </p>
           </CardContent>
         </Card>
@@ -623,18 +743,18 @@ export function AnalyticsDashboard() {
                 <Calendar className="w-3.5 h-3.5" />
                 Busiest Day
               </CardDescription>
-              <MiniBarChart data={weeklyBreakdown} />
+              <MiniBarChart data={filteredWeeklyBreakdown.length ? filteredWeeklyBreakdown : weeklyBreakdown} />
             </div>
             <CardTitle className="text-3xl font-bold tracking-tight">
-              {busiestDay !== null ? DAY_SHORT[busiestDay] : "N/A"}
+              {filteredBusiestDay !== null ? DAY_SHORT[filteredBusiestDay] : (busiestDay !== null ? DAY_SHORT[busiestDay] : "N/A")}
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-0">
             <span className="text-[11px] text-emerald-500">
-              {busiestDay !== null ? DAY_NAMES[busiestDay] : ""}
+              {filteredBusiestDay !== null ? DAY_NAMES[filteredBusiestDay] : (busiestDay !== null ? DAY_NAMES[busiestDay] : "")}
             </span>
             <p className="text-[10px] text-muted-foreground mt-1.5 leading-tight">
-              Highest traffic day of the week
+              Highest traffic day ({timeRange})
             </p>
           </CardContent>
         </Card>
@@ -649,7 +769,7 @@ export function AnalyticsDashboard() {
               </CardDescription>
             </div>
             <CardTitle className="text-3xl font-bold tracking-tight">
-              {quietestHour !== null ? formatHourLabel(quietestHour) : "N/A"}
+              {filteredQuietestHour !== null ? formatHourLabel(filteredQuietestHour) : (quietestHour !== null ? formatHourLabel(quietestHour) : "N/A")}
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-0">
@@ -657,7 +777,7 @@ export function AnalyticsDashboard() {
               Best for maintenance
             </span>
             <p className="text-[10px] text-muted-foreground mt-1.5 leading-tight">
-              Lowest traffic hour (5AM-11PM)
+              Lowest traffic hour ({timeRange})
             </p>
           </CardContent>
         </Card>
@@ -669,24 +789,38 @@ export function AnalyticsDashboard() {
         <Card className="bg-zinc-900/20 border-zinc-800/50">
           <CardHeader className="py-3">
             <div className="flex items-center justify-between">
-              <div>
-                <CardDescription className="text-xs">This Month</CardDescription>
-                <CardTitle className="text-2xl font-bold">{thisMonthCount}</CardTitle>
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-emerald-500/10">
+                  <Calendar className="w-4 h-4 text-emerald-500" />
+                </div>
+                <div>
+                  <CardDescription className="text-xs">This Month</CardDescription>
+                  <CardTitle className="text-2xl font-bold">{thisMonthCount}</CardTitle>
+                </div>
               </div>
               <TrendIndicator current={thisMonthCount} previous={lastMonthCount} suffix="vs last month" />
             </div>
           </CardHeader>
         </Card>
 
-        {/* Daily Average */}
+        {/* Daily Average / Monthly Average */}
         <Card className="bg-zinc-900/20 border-zinc-800/50">
           <CardHeader className="py-3">
             <div className="flex items-center justify-between">
-              <div>
-                <CardDescription className="text-xs">Daily Average</CardDescription>
-                <CardTitle className="text-2xl font-bold">{avgDailyCheckIns}</CardTitle>
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-blue-500/10">
+                  <Activity className="w-4 h-4 text-blue-500" />
+                </div>
+                <div>
+                  <CardDescription className="text-xs">
+                    {timeRange === "year" ? "Monthly Average" : "Daily Average"}
+                  </CardDescription>
+                  <CardTitle className="text-2xl font-bold">{filteredAvgDaily}</CardTitle>
+                </div>
               </div>
-              <span className="text-[11px] text-muted-foreground">Last 30 days</span>
+              <span className="text-[11px] text-muted-foreground px-2 py-1 bg-zinc-800 rounded">
+                {timeRange === "all" ? "Per year (365 days)" : timeRange === "year" ? "This year" : `This ${timeRange}`}
+              </span>
             </div>
           </CardHeader>
         </Card>
@@ -695,9 +829,14 @@ export function AnalyticsDashboard() {
         <Card className="bg-zinc-900/20 border-zinc-800/50">
           <CardHeader className="py-3">
             <div className="flex items-center justify-between">
-              <div>
-                <CardDescription className="text-xs">Today</CardDescription>
-                <CardTitle className="text-2xl font-bold">{todayCount}</CardTitle>
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-amber-500/10">
+                  <Clock className="w-4 h-4 text-amber-500" />
+                </div>
+                <div>
+                  <CardDescription className="text-xs">Today</CardDescription>
+                  <CardTitle className="text-2xl font-bold">{todayCount}</CardTitle>
+                </div>
               </div>
               <TrendIndicator current={todayCount} previous={yesterdayCount} suffix="vs yesterday" />
             </div>

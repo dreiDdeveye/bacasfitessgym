@@ -54,7 +54,7 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
 
       {/* LOGIN CARD */}
 <Card className="w-full max-w-md bg-black/90 shadow-lg rounded-lg">
-  <CardContent className="pt-8 px-8">
+  <CardContent className="pt-5 px-8">
     <form onSubmit={handleSubmit} className="space-y-6">
       {error && (
         <Alert className="bg-red-500/20 border-red-500/40">
