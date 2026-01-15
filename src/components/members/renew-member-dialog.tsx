@@ -23,11 +23,10 @@ interface RenewMemberDialogProps {
 }
 
 type SubscriptionType = "regular" | "walkin"
-type RegularDuration = 1 | 3 | 6 | 12
+type RegularDuration = 1 | 6 | 12
 
 const REGULAR_OPTIONS: { label: string; months: RegularDuration }[] = [
   { label: "1 Month", months: 1 },
-  { label: "3 Months", months: 3 },
   { label: "6 Months", months: 6 },
   { label: "1 Year", months: 12 },
 ]
