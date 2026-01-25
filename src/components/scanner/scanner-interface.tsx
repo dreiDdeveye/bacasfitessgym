@@ -23,6 +23,9 @@ import {
   Timer,
   Users,
   ChevronRight,
+  Calendar,
+  CalendarDays,
+  CalendarClock,
 } from "lucide-react"
 import { useQRScanner } from "@/src/hooks/use-qr-scanner"
 import { accessService } from "@/src/services/access.service"
@@ -45,10 +48,13 @@ type ScanResult = {
   user?: UserType | null
 }
 
+type MembershipType = "monthly" | "daily" | "walkin" | "unknown"
+
 type MemberWithStats = {
   user: UserType
   subscription: Subscription | null
   isActive: boolean
+  membershipType: MembershipType
   gymHours: {
     today: number
     week: number
@@ -60,12 +66,18 @@ type MemberWithStats = {
 
 type HoursView = "today" | "week" | "month" | "year" | "all"
 type StatusFilter = "all" | "active" | "expired"
+type MembershipFilter = "all" | "monthly" | "daily" | "walkin"
 
 export function ScannerInterface() {
   const [lastScan, setLastScan] = useState<ScanResult | null>(null)
   const [activeSessions, setActiveSessions] = useState(0)
   const [todayCheckIns, setTodayCheckIns] = useState(0)
   const [totalMembers, setTotalMembers] = useState(0)
+  
+  // Membership type counts
+  const [monthlyCount, setMonthlyCount] = useState(0)
+  const [dailyCount, setDailyCount] = useState(0)
+  const [walkinCount, setWalkinCount] = useState(0)
   
   // Members dialog state
   const [showMembersDialog, setShowMembersDialog] = useState(false)
@@ -74,6 +86,7 @@ export function ScannerInterface() {
   const [searchTerm, setSearchTerm] = useState("")
   const [hoursView, setHoursView] = useState<HoursView>("week")
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all")
+  const [membershipFilter, setMembershipFilter] = useState<MembershipFilter>("all")
 
   /* ---------------- HELPERS ---------------- */
 
@@ -109,6 +122,57 @@ export function ScannerInterface() {
     return `${hours.toFixed(1)}h`
   }
 
+  /* ---------------- DETERMINE MEMBERSHIP TYPE ---------------- */
+
+  const getMembershipType = (subscription: Subscription | null): MembershipType => {
+    if (!subscription) return "unknown"
+
+    const start = new Date(subscription.startDate)
+    const end = new Date(subscription.endDate)
+    const durationHours = (end.getTime() - start.getTime()) / (1000 * 60 * 60)
+
+    // DAILY = expires at midnight AND less than 24h
+    const isDaily =
+      end.getHours() === 0 &&
+      end.getMinutes() === 0 &&
+      durationHours <= 24
+
+    if (isDaily) return "daily"
+
+    // MONTHLY = month-based plans (1, 6, 12 months)
+    const months =
+      (end.getFullYear() - start.getFullYear()) * 12 +
+      (end.getMonth() - start.getMonth())
+
+    const regularPlans = [1, 6, 12]
+    if (regularPlans.includes(months)) return "monthly"
+
+    // Otherwise it's a walk-in with custom dates
+    return "walkin"
+  }
+
+  const getMembershipLabel = (type: MembershipType): string => {
+    switch (type) {
+      case "monthly": return "Monthly"
+      case "daily": return "Daily"
+      case "walkin": return "Walk-in"
+      default: return "Unknown"
+    }
+  }
+
+  const getMembershipBadge = (type: MembershipType) => {
+    switch (type) {
+      case "monthly":
+        return <Badge variant="default">Monthly</Badge>
+      case "daily":
+        return <Badge className="bg-purple-600 text-white">Daily</Badge>
+      case "walkin":
+        return <Badge variant="outline" className="text-blue-600 border-blue-600">Walk-in</Badge>
+      default:
+        return <Badge variant="secondary">Unknown</Badge>
+    }
+  }
+
   /* ---------------- CALCULATE GYM HOURS ---------------- */
 
   const calculateGymHours = async (userId: string): Promise<MemberWithStats["gymHours"]> => {
@@ -135,7 +199,6 @@ export function ScannerInterface() {
       for (const log of sorted) {
         const logTime = new Date(log.timestamp)
         
-        // Skip logs before the period
         if (periodStart && logTime < periodStart) continue
 
         if (log.action === "check-in") {
@@ -170,12 +233,14 @@ export function ScannerInterface() {
     for (const user of users) {
       const subscription = await storageService.getSubscriptionByUserId(user.userId)
       const isActive = subscriptionService.isSubscriptionActive(subscription)
+      const membershipType = getMembershipType(subscription)
       const gymHours = await calculateGymHours(user.userId)
 
       membersData.push({
         user,
         subscription,
         isActive,
+        membershipType,
         gymHours,
       })
     }
@@ -202,6 +267,23 @@ export function ScannerInterface() {
     setActiveSessions(sessions.length)
     setTodayCheckIns(logs.filter((l) => l.action === "check-in").length)
     setTotalMembers(users.length)
+
+    // Calculate membership type counts
+    let monthly = 0
+    let daily = 0
+    let walkin = 0
+
+    for (const user of users) {
+      const subscription = await storageService.getSubscriptionByUserId(user.userId)
+      const type = getMembershipType(subscription)
+      if (type === "monthly") monthly++
+      else if (type === "daily") daily++
+      else if (type === "walkin") walkin++
+    }
+
+    setMonthlyCount(monthly)
+    setDailyCount(daily)
+    setWalkinCount(walkin)
   }
 
   /* ---------------- SCAN ---------------- */
@@ -253,7 +335,8 @@ export function ScannerInterface() {
 
   /* ---------------- HANDLE MEMBERS CARD CLICK ---------------- */
 
-  const handleMembersCardClick = () => {
+  const handleMembersCardClick = (filter?: MembershipFilter) => {
+    setMembershipFilter(filter || "all")
     setShowMembersDialog(true)
     loadMembersWithStats()
   }
@@ -273,17 +356,27 @@ export function ScannerInterface() {
       (statusFilter === "active" && member.isActive) ||
       (statusFilter === "expired" && !member.isActive)
 
-    return matchesSearch && matchesStatus
+    // Membership type filter
+    const matchesMembership =
+      membershipFilter === "all" ||
+      member.membershipType === membershipFilter
+
+    return matchesSearch && matchesStatus && matchesMembership
   })
 
   const activeCount = membersWithStats.filter((m) => m.isActive).length
   const expiredCount = membersWithStats.filter((m) => !m.isActive).length
 
+  // Counts for current filter
+  const filteredMonthlyCount = membersWithStats.filter((m) => m.membershipType === "monthly").length
+  const filteredDailyCount = membersWithStats.filter((m) => m.membershipType === "daily").length
+  const filteredWalkinCount = membersWithStats.filter((m) => m.membershipType === "walkin").length
+
   /* ================= UI ================= */
 
   return (
     <div className="space-y-6">
-      {/* STATS */}
+      {/* STATS ROW 1 */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card className="p-6">
           <p className="text-sm text-muted-foreground">Active Now</p>
@@ -297,12 +390,72 @@ export function ScannerInterface() {
         {/* Clickable Total Members Card */}
         <Card 
           className="p-6 cursor-pointer hover:bg-zinc-800/50 transition-colors group"
-          onClick={handleMembersCardClick}
+          onClick={() => handleMembersCardClick("all")}
         >
           <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-muted-foreground">Total Members</p>
-              <p className="text-2xl font-bold">{totalMembers}</p>
+            <div className="flex items-center gap-3">
+              <Users className="w-5 h-5 text-muted-foreground" />
+              <div>
+                <p className="text-sm text-muted-foreground">Total Members</p>
+                <p className="text-2xl font-bold">{totalMembers}</p>
+              </div>
+            </div>
+            <ChevronRight className="w-5 h-5 text-muted-foreground group-hover:text-foreground transition-colors" />
+          </div>
+        </Card>
+      </div>
+
+      {/* STATS ROW 2 - Membership Types */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Monthly Members */}
+        <Card 
+          className="p-6 cursor-pointer hover:bg-zinc-800/50 transition-colors group border-l-4 border-l-primary"
+          onClick={() => handleMembersCardClick("monthly")}
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <CalendarDays className="w-5 h-5 text-primary" />
+              <div>
+                <p className="text-sm text-muted-foreground">Monthly Subs</p>
+                <p className="text-2xl font-bold">{monthlyCount}</p>
+                <p className="text-xs text-muted-foreground">1m, 6m, 1 year plans</p>
+              </div>
+            </div>
+            <ChevronRight className="w-5 h-5 text-muted-foreground group-hover:text-foreground transition-colors" />
+          </div>
+        </Card>
+
+        {/* Daily Members */}
+        <Card 
+          className="p-6 cursor-pointer hover:bg-zinc-800/50 transition-colors group border-l-4 border-l-purple-600"
+          onClick={() => handleMembersCardClick("daily")}
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Calendar className="w-5 h-5 text-purple-600" />
+              <div>
+                <p className="text-sm text-muted-foreground">Daily Pass</p>
+                <p className="text-2xl font-bold">{dailyCount}</p>
+                <p className="text-xs text-muted-foreground">Expires at midnight</p>
+              </div>
+            </div>
+            <ChevronRight className="w-5 h-5 text-muted-foreground group-hover:text-foreground transition-colors" />
+          </div>
+        </Card>
+
+        {/* Walk-in Members */}
+        <Card 
+          className="p-6 cursor-pointer hover:bg-zinc-800/50 transition-colors group border-l-4 border-l-blue-600"
+          onClick={() => handleMembersCardClick("walkin")}
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <CalendarClock className="w-5 h-5 text-blue-600" />
+              <div>
+                <p className="text-sm text-muted-foreground">Walk-in</p>
+                <p className="text-2xl font-bold">{walkinCount}</p>
+                <p className="text-xs text-muted-foreground">Custom date range</p>
+              </div>
             </div>
             <ChevronRight className="w-5 h-5 text-muted-foreground group-hover:text-foreground transition-colors" />
           </div>
@@ -330,7 +483,13 @@ export function ScannerInterface() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Users className="w-5 h-5" />
-              All Members ({totalMembers})
+              {membershipFilter === "all" 
+                ? `All Members (${totalMembers})`
+                : `${getMembershipLabel(membershipFilter)} Members (${
+                    membershipFilter === "monthly" ? monthlyCount :
+                    membershipFilter === "daily" ? dailyCount : walkinCount
+                  })`
+              }
             </DialogTitle>
           </DialogHeader>
 
@@ -347,9 +506,22 @@ export function ScannerInterface() {
               />
             </div>
 
+            {/* Membership Type Filter */}
+            <Select value={membershipFilter} onValueChange={(v) => setMembershipFilter(v as MembershipFilter)}>
+              <SelectTrigger className="w-[150px]">
+                <SelectValue placeholder="Type" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Types</SelectItem>
+                <SelectItem value="monthly">Monthly ({filteredMonthlyCount})</SelectItem>
+                <SelectItem value="daily">Daily ({filteredDailyCount})</SelectItem>
+                <SelectItem value="walkin">Walk-in ({filteredWalkinCount})</SelectItem>
+              </SelectContent>
+            </Select>
+
             {/* Status Filter */}
             <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as StatusFilter)}>
-              <SelectTrigger className="w-[160px]">
+              <SelectTrigger className="w-[140px]">
                 <SelectValue placeholder="Status" />
               </SelectTrigger>
               <SelectContent>
@@ -361,8 +533,8 @@ export function ScannerInterface() {
 
             {/* Hours View */}
             <Select value={hoursView} onValueChange={(v) => setHoursView(v as HoursView)}>
-              <SelectTrigger className="w-[140px]">
-                <SelectValue placeholder="Hours view" />
+              <SelectTrigger className="w-[130px]">
+                <SelectValue placeholder="Hours" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="today">Today</SelectItem>
@@ -375,7 +547,7 @@ export function ScannerInterface() {
           </div>
 
           {/* Stats Summary */}
-          <div className="flex gap-4 py-2 text-sm">
+          <div className="flex flex-wrap gap-4 py-2 text-sm">
             <div className="flex items-center gap-2">
               <div className="w-2 h-2 rounded-full bg-emerald-500" />
               <span className="text-muted-foreground">Active: {activeCount}</span>
@@ -383,6 +555,19 @@ export function ScannerInterface() {
             <div className="flex items-center gap-2">
               <div className="w-2 h-2 rounded-full bg-red-500" />
               <span className="text-muted-foreground">Expired: {expiredCount}</span>
+            </div>
+            <span className="text-muted-foreground">|</span>
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-primary" />
+              <span className="text-muted-foreground">Monthly: {filteredMonthlyCount}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-purple-600" />
+              <span className="text-muted-foreground">Daily: {filteredDailyCount}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-blue-600" />
+              <span className="text-muted-foreground">Walk-in: {filteredWalkinCount}</span>
             </div>
           </div>
 
@@ -410,6 +595,7 @@ export function ScannerInterface() {
                         <Badge variant={member.isActive ? "default" : "destructive"}>
                           {member.isActive ? "Active" : "Expired"}
                         </Badge>
+                        {getMembershipBadge(member.membershipType)}
                       </div>
                       
                       {/* Subscription Info */}
@@ -443,7 +629,7 @@ export function ScannerInterface() {
                     </div>
                   </div>
 
-                  {/* All Hours Breakdown (collapsible or always visible) */}
+                  {/* All Hours Breakdown */}
                   <div className="flex gap-4 mt-3 pt-3 border-t text-xs">
                     <div className="flex-1 text-center">
                       <p className="text-muted-foreground">Today</p>
@@ -495,58 +681,13 @@ export function ScannerInterface() {
                 <p className="text-sm text-white-600 ">ID: {lastScan.log?.userId}</p>
 
                 {/* Subscription Type Indicator */}
-             <div className="mt-2">
-  {(() => {
-    if (!lastScan.subscription) return null
-
-    const start = new Date(lastScan.subscription.startDate)
-    const end = new Date(lastScan.subscription.endDate)
-
-    // duration in hours
-    const durationHours =
-      (end.getTime() - start.getTime()) / (1000 * 60 * 60)
-
-    // DAILY = expires at midnight AND less than 24h
-    const isDaily =
-      end.getHours() === 0 &&
-      end.getMinutes() === 0 &&
-      durationHours <= 24
-
-    // REGULAR = month-based plans
-    const months =
-      (end.getFullYear() - start.getFullYear()) * 12 +
-      (end.getMonth() - start.getMonth())
-
-    const regularPlans = [1, 6, 12]
-    const isRegular = regularPlans.includes(months)
-
-    if (isDaily) {
-      return (
-        <Badge className="bg-purple-600 text-white">
-          Daily Pass
-        </Badge>
-      )
-    }
-
-    if (isRegular) {
-      return (
-        <Badge variant="default">
-          Regular
-        </Badge>
-      )
-    }
-
-    return (
-      <Badge
-        variant="outline"
-        className="text-blue-600 border-blue-600"
-      >
-        Walk-in
-      </Badge>
-    )
-  })()}
-</div>
-
+                <div className="mt-2">
+                  {(() => {
+                    if (!lastScan.subscription) return null
+                    const type = getMembershipType(lastScan.subscription)
+                    return getMembershipBadge(type)
+                  })()}
+                </div>
 
                 {/* EXPIRY */}
                 <div className="mt-4">
