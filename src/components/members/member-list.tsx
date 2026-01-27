@@ -56,16 +56,24 @@ export function MemberList({ users, onUpdate }: MemberListProps) {
   const [subscriptionCache, setSubscriptionCache] =
     useState<Map<string, Subscription | null>>(new Map())
 
-  /* ---------------- SUBSCRIPTIONS CACHE ---------------- */
+  /* ---------------- OPTIMIZED SUBSCRIPTIONS CACHE ---------------- */
   useEffect(() => {
     const loadSubscriptions = async () => {
-      const cache = new Map<string, Subscription | null>()
+      // Fetch ALL subscriptions at once instead of one by one
+      const allSubscriptions = await storageService.getSubscriptions()
+      
+      // Create a Map for O(1) lookups
+      const cache = new Map<string, Subscription | null>(
+        allSubscriptions.map(sub => [sub.userId, sub])
+      )
+      
+      // Add null entries for users without subscriptions
       for (const user of users) {
-        const subscription = await storageService.getSubscriptionByUserId(
-          user.userId
-        )
-        cache.set(user.userId, subscription)
+        if (!cache.has(user.userId)) {
+          cache.set(user.userId, null)
+        }
       }
+      
       setSubscriptionCache(cache)
     }
     loadSubscriptions()
@@ -85,11 +93,11 @@ export function MemberList({ users, onUpdate }: MemberListProps) {
     )
   }, [searchTerm, users])
 
-  const getSubscription = (userId: string) =>
-    subscriptionCache.get(userId) || null
+  const getSubscription = (userId: string): Subscription | null =>
+    subscriptionCache.get(userId) ?? null
 
-  const isActive = (sub: Subscription | null) =>
-    subscriptionService.isSubscriptionActive(sub)
+  const isActive = (sub: Subscription | null | undefined) =>
+    subscriptionService.isSubscriptionActive(sub ?? null)
 
   const getRemainingDays = (sub: Subscription | null) =>
     subscriptionService.getRemainingDays(sub)

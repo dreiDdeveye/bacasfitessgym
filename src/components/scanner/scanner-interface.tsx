@@ -222,28 +222,36 @@ export function ScannerInterface() {
     }
   }
 
-  /* ---------------- LOAD MEMBERS WITH STATS ---------------- */
+  /* ---------------- OPTIMIZED LOAD MEMBERS WITH STATS (PROGRESSIVE) ---------------- */
 
   const loadMembersWithStats = async () => {
     setIsLoadingMembers(true)
     
-    const users = await storageService.getUsers()
-    const membersData: MemberWithStats[] = []
+    // Fetch users and subscriptions in parallel - MUCH FASTER!
+    const [users, allSubscriptions] = await Promise.all([
+      storageService.getUsers(),
+      storageService.getSubscriptions(),
+    ])
 
-    for (const user of users) {
-      const subscription = await storageService.getSubscriptionByUserId(user.userId)
+    // Create subscription lookup map for O(1) access
+    const subscriptionMap = new Map(
+      allSubscriptions.map(sub => [sub.userId, sub])
+    )
+
+    // STEP 1: Show members immediately with zero gym hours
+    const membersData: MemberWithStats[] = users.map(user => {
+      const subscription = subscriptionMap.get(user.userId) || null
       const isActive = subscriptionService.isSubscriptionActive(subscription)
       const membershipType = getMembershipType(subscription)
-      const gymHours = await calculateGymHours(user.userId)
 
-      membersData.push({
+      return {
         user,
         subscription,
         isActive,
         membershipType,
-        gymHours,
-      })
-    }
+        gymHours: { today: 0, week: 0, month: 0, year: 0, all: 0 }, // Placeholder
+      }
+    })
 
     // Sort: active members first, then by name
     membersData.sort((a, b) => {
@@ -251,31 +259,57 @@ export function ScannerInterface() {
       return a.user.name.localeCompare(b.user.name)
     })
 
+    // Show members immediately!
     setMembersWithStats(membersData)
     setIsLoadingMembers(false)
+
+    // STEP 2: Load gym hours in background (progressively update)
+    for (let i = 0; i < membersData.length; i++) {
+      const member = membersData[i]
+      const gymHours = await calculateGymHours(member.user.userId)
+      
+      // Update this specific member's gym hours
+      setMembersWithStats(prev => {
+        const updated = [...prev]
+        const index = updated.findIndex(m => m.user.userId === member.user.userId)
+        if (index !== -1) {
+          updated[index] = { ...updated[index], gymHours }
+        }
+        return updated
+      })
+    }
   }
 
-  /* ---------------- DASHBOARD ---------------- */
+  /* ---------------- OPTIMIZED DASHBOARD STATS ---------------- */
 
   const updateStats = async () => {
-    const [sessions, logs, users] = await Promise.all([
+    // Fetch all data in parallel - MUCH FASTER!
+    const [sessions, logs, users, allSubscriptions] = await Promise.all([
       storageService.getActiveSessions(),
       storageService.getTodayScanLogs(),
       storageService.getUsers(),
+      storageService.getSubscriptions(), // Get ALL subscriptions at once
     ])
 
     setActiveSessions(sessions.length)
     setTodayCheckIns(logs.filter((l) => l.action === "check-in").length)
     setTotalMembers(users.length)
 
+    // Create a map for O(1) lookup instead of O(n) for each user
+    const subscriptionMap = new Map(
+      allSubscriptions.map(sub => [sub.userId, sub])
+    )
+
     // Calculate membership type counts
     let monthly = 0
     let daily = 0
     let walkin = 0
 
+    // Now loop through users with instant lookups - NO MORE SLOW DATABASE CALLS!
     for (const user of users) {
-      const subscription = await storageService.getSubscriptionByUserId(user.userId)
+      const subscription = subscriptionMap.get(user.userId) || null
       const type = getMembershipType(subscription)
+      
       if (type === "monthly") monthly++
       else if (type === "daily") daily++
       else if (type === "walkin") walkin++
