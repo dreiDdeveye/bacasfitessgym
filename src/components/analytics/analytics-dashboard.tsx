@@ -32,6 +32,10 @@ import {
   endOfMonth,
   startOfWeek as getStartOfWeek,
   getDaysInMonth,
+  parseISO,
+  getWeekOfMonth,
+  endOfWeek,
+  isWithinInterval,
 } from "date-fns"
 import type { ScanLog } from "@/src/types"
 import { storageService } from "@/src/services/storage.service"
@@ -180,6 +184,7 @@ export function AnalyticsDashboard() {
   const [lineData, setLineData] = useState<any[]>([])
   const [legendOpen, setLegendOpen] = useState<boolean>(false)
   const [selectedMonth, setSelectedMonth] = useState<string>(last12Months[11].key)
+  const [selectedWeek, setSelectedWeek] = useState<string>("all")
   const [allValidLogs, setAllValidLogs] = useState<ScanLog[]>([])
   const [contributionData, setContributionData] = useState<ContributionDay[]>([])
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear())
@@ -209,16 +214,46 @@ export function AnalyticsDashboard() {
   const [filteredHourlyDistribution, setFilteredHourlyDistribution] = useState<number[]>([])
   const [filteredAvgDaily, setFilteredAvgDaily] = useState(0)
 
+  // Get available weeks for the selected month
+  const getAvailableWeeks = () => {
+    const [year, month] = selectedMonth.split("-").map(Number)
+    const monthStart = new Date(year, month - 1, 1)
+    const monthEnd = endOfMonth(monthStart)
+    
+    const weeks: { value: string; label: string }[] = [{ value: "all", label: "All Weeks" }]
+    
+    let currentWeek = 1
+    let currentDate = monthStart
+    
+    while (currentDate <= monthEnd) {
+      const weekStart = startOfWeek(currentDate, { weekStartsOn: 0 })
+      const weekEnd = endOfWeek(currentDate, { weekStartsOn: 0 })
+      
+      // Only add if week start is in the selected month
+      if (weekStart.getMonth() === month - 1 || currentDate.getMonth() === month - 1) {
+        weeks.push({
+          value: `week${currentWeek}`,
+          label: `Week ${currentWeek} (${format(Math.max(weekStart.getTime(), monthStart.getTime()), "MMM d")} - ${format(Math.min(weekEnd.getTime(), monthEnd.getTime()), "MMM d")})`
+        })
+      }
+      
+      currentWeek++
+      currentDate = new Date(currentDate.getTime() + 7 * 24 * 60 * 60 * 1000) // Add 7 days
+    }
+    
+    return weeks
+  }
+
   useEffect(() => {
     loadAnalytics()
   }, [])
 
   useEffect(() => {
     if (allValidLogs.length) {
-      updateLineDataForMonth(selectedMonth)
+      updateLineDataForMonth(selectedMonth, selectedWeek)
       generateContributionData(selectedYear)
     }
-  }, [allValidLogs, selectedMonth, selectedYear])
+  }, [allValidLogs, selectedMonth, selectedYear, selectedWeek])
 
   // Update filtered stats when time range changes
   useEffect(() => {
@@ -241,31 +276,26 @@ export function AnalyticsDashboard() {
         break
       case "week": {
         filteredLogs = allValidLogs.filter(l => new Date(l.timestamp) >= thisWeekStart)
-        // Week always has 7 days
         daysInRange = 7
         break
       }
       case "month": {
         filteredLogs = allValidLogs.filter(l => new Date(l.timestamp) >= thisMonthStart)
-        // Get total days in current month (28/29/30/31)
         daysInRange = getDaysInMonth(now)
         break
       }
       case "year": {
         filteredLogs = allValidLogs.filter(l => new Date(l.timestamp) >= yearStart)
-        // 12 months in a year (for monthly average)
         daysInRange = 12
         break
       }
       case "all":
       default:
         filteredLogs = allValidLogs
-        // Use 365 days for "all time" average
         daysInRange = 365
         break
     }
     
-    // Ensure daysInRange is at least 1
     daysInRange = Math.max(1, daysInRange)
     
     // Calculate peak hour for filtered range
@@ -390,7 +420,6 @@ export function AnalyticsDashboard() {
     let minHour: number | null = null
     let minCount = Infinity
     
-    // Consider hours 5 AM - 11 PM for quietest
     hourMap.forEach((count, hour) => {
       if (count > maxCount) {
         maxCount = count
@@ -515,10 +544,44 @@ export function AnalyticsDashboard() {
     setYearlyTotal(total)
   }
 
-  function updateLineDataForMonth(monthKey: string) {
-    const filteredLogs = allValidLogs.filter(
+  function updateLineDataForMonth(monthKey: string, weekFilter: string) {
+    let filteredLogs = allValidLogs.filter(
       (log) => format(new Date(log.timestamp), "yyyy-MM") === monthKey
     )
+    
+    // Apply week filter if not "all"
+    if (weekFilter !== "all") {
+      const weekNumber = parseInt(weekFilter.replace("week", ""))
+      const [year, month] = monthKey.split("-").map(Number)
+      const monthStart = new Date(year, month - 1, 1)
+      const monthEnd = endOfMonth(monthStart)
+      
+      // Calculate the start and end of the selected week
+      let weekStart = new Date(monthStart)
+      let weekEnd = new Date(monthStart)
+      
+      // Find the start of the selected week
+      let currentWeek = 1
+      let currentDate = monthStart
+      
+      while (currentWeek < weekNumber && currentDate <= monthEnd) {
+        currentDate = new Date(currentDate.getTime() + 7 * 24 * 60 * 60 * 1000)
+        currentWeek++
+      }
+      
+      weekStart = startOfWeek(currentDate, { weekStartsOn: 0 })
+      weekEnd = endOfWeek(currentDate, { weekStartsOn: 0 })
+      
+      // Make sure we stay within the month boundaries
+      weekStart = new Date(Math.max(weekStart.getTime(), monthStart.getTime()))
+      weekEnd = new Date(Math.min(weekEnd.getTime(), monthEnd.getTime()))
+      
+      filteredLogs = filteredLogs.filter((log) => {
+        const logDate = new Date(log.timestamp)
+        return isWithinInterval(logDate, { start: weekStart, end: weekEnd })
+      })
+    }
+    
     const data: any[] = []
     for (let day = 0; day < 7; day++) {
       const dayLabel = DAY_SHORT[day]
@@ -624,6 +687,7 @@ export function AnalyticsDashboard() {
 
   const currentYear = new Date().getFullYear()
   const yearOptions = Array.from({ length: 5 }, (_, i) => currentYear - i)
+  const availableWeeks = getAvailableWeeks()
 
   // Get current display count based on time range
   const getDisplayCount = () => {
@@ -954,22 +1018,45 @@ export function AnalyticsDashboard() {
             <CardDescription>Each line represents a 2-hour pair.</CardDescription>
           </div>
 
-          <div className="mt-4 md:mt-0 flex items-center space-x-2">
-            <label htmlFor="monthPicker" className="text-sm text-muted-foreground whitespace-nowrap">
-              Month:
-            </label>
-            <select
-              id="monthPicker"
-              value={selectedMonth}
-              onChange={(e) => setSelectedMonth(e.target.value)}
-              className="border border-zinc-700 rounded px-2 py-1 bg-zinc-800 text-sm"
-            >
-              {last12Months.map(({ key, label }) => (
-                <option key={key} value={key}>
-                  {label}
-                </option>
-              ))}
-            </select>
+          <div className="mt-4 md:mt-0 flex items-center gap-3 flex-wrap">
+            <div className="flex items-center space-x-2">
+              <label htmlFor="monthPicker" className="text-sm text-muted-foreground whitespace-nowrap">
+                Month:
+              </label>
+              <select
+                id="monthPicker"
+                value={selectedMonth}
+                onChange={(e) => {
+                  setSelectedMonth(e.target.value)
+                  setSelectedWeek("all") // Reset week when month changes
+                }}
+                className="border border-zinc-700 rounded px-2 py-1 bg-zinc-800 text-sm"
+              >
+                {last12Months.map(({ key, label }) => (
+                  <option key={key} value={key}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <label htmlFor="weekPicker" className="text-sm text-muted-foreground whitespace-nowrap">
+                Week:
+              </label>
+              <select
+                id="weekPicker"
+                value={selectedWeek}
+                onChange={(e) => setSelectedWeek(e.target.value)}
+                className="border border-zinc-700 rounded px-2 py-1 bg-zinc-800 text-sm min-w-[180px]"
+              >
+                {availableWeeks.map(({ value, label }) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
         </CardHeader>
 

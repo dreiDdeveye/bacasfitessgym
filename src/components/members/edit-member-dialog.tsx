@@ -25,13 +25,121 @@ const subscriptionPlans = [
   { label: "1 Year", value: "12", months: 12 },
 ]
 
+// ==================== DATE UTILITIES ====================
+
+// Format today as dd/mm/yyyy
+function getTodayFormatted(): string {
+  const now = new Date()
+  const day = String(now.getDate()).padStart(2, "0")
+  const month = String(now.getMonth() + 1).padStart(2, "0")
+  const year = now.getFullYear()
+  return `${day}/${month}/${year}`
+}
+
+// Parse dd/mm/yyyy string to Date object
+function parseDate(dateStr: string): Date | null {
+  if (!dateStr) return null
+  const parts = dateStr.split("/")
+  if (parts.length !== 3) return null
+  const day = parseInt(parts[0], 10)
+  const month = parseInt(parts[1], 10)
+  const year = parseInt(parts[2], 10)
+  if (isNaN(day) || isNaN(month) || isNaN(year)) return null
+  if (month < 1 || month > 12) return null
+  if (day < 1 || day > 31) return null
+  if (year < 1900 || year > 2100) return null
+  const date = new Date(year, month - 1, day)
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
+    return null
+  }
+  return date
+}
+
+// Check if date string is valid
+function isValidDateString(dateStr: string): boolean {
+  return parseDate(dateStr) !== null
+}
+
+// Format Date object to dd/mm/yyyy string
+function formatDateToDMY(date: Date): string {
+  const day = String(date.getDate()).padStart(2, "0")
+  const month = String(date.getMonth() + 1).padStart(2, "0")
+  const year = date.getFullYear()
+  return `${day}/${month}/${year}`
+}
+
+// Format date input with auto slashes
+function formatDateInput(value: string): string {
+  const digits = value.replace(/\D/g, "")
+  let formatted = ""
+  for (let i = 0; i < digits.length && i < 8; i++) {
+    if (i === 2 || i === 4) {
+      formatted += "/"
+    }
+    formatted += digits[i]
+  }
+  return formatted
+}
+
+// Convert ISO string to dd/mm/yyyy
+function isoToDMY(iso?: string): string {
+  if (!iso) return ""
+  try {
+    const date = new Date(iso)
+    return formatDateToDMY(date)
+  } catch {
+    return ""
+  }
+}
+
+// ==================== DATE INPUT COMPONENT ====================
+
+function DateInput({
+  value,
+  onChange,
+  label,
+  disabled = false,
+  required = false,
+}: {
+  value: string
+  onChange: (value: string) => void
+  label: string
+  disabled?: boolean
+  required?: boolean
+}) {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const formatted = formatDateInput(e.target.value)
+    onChange(formatted)
+  }
+
+  return (
+    <div className="space-y-2">
+      <Label>{label}{required && " *"}</Label>
+      <input
+        type="text"
+        placeholder="dd/mm/yyyy"
+        value={value}
+        onChange={handleChange}
+        disabled={disabled}
+        className="w-full px-3 py-2 rounded-md border bg-background text-sm disabled:opacity-50"
+        maxLength={10}
+      />
+    </div>
+  )
+}
+
 export function EditMemberDialog({ user, open, onOpenChange, onMemberUpdated }: EditMemberDialogProps) {
   const [formData, setFormData] = useState({
     name: user?.name || "",
+    birthday: "",
+    age: "",
+    address: user?.address || "",
     email: user?.email || "",
     phone: user?.phone || "",
     heightCm: user?.heightCm?.toString() || "",
     weightKg: user?.weightKg?.toString() || "",
+    goal: user?.goal || "",
+    programType: user?.programType || "",
   })
   const [subscription, setSubscription] = useState<Subscription | null>(null)
   const [subscriptionData, setSubscriptionData] = useState({
@@ -42,14 +150,33 @@ export function EditMemberDialog({ user, open, onOpenChange, onMemberUpdated }: 
   const [errors, setErrors] = useState<{ [key: string]: string }>({})
   const [isLoading, setIsLoading] = useState(false)
 
+  // Calculate age from birthday
+  useEffect(() => {
+    if (isValidDateString(formData.birthday)) {
+      const birthDate = parseDate(formData.birthday)!
+      const today = new Date()
+      let age = today.getFullYear() - birthDate.getFullYear()
+      const monthDiff = today.getMonth() - birthDate.getMonth()
+      if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) age--
+      setFormData(prev => ({ ...prev, age: age.toString() }))
+    } else {
+      setFormData(prev => ({ ...prev, age: "" }))
+    }
+  }, [formData.birthday])
+
   useEffect(() => {
     if (user && open) {
       setFormData({
         name: user.name,
-        email: user.email,
-        phone: user.phone,
+        birthday: isoToDMY(user.birthday),
+        age: user.age?.toString() || "",
+        address: user.address || "",
+        email: user.email || "",
+        phone: user.phone || "",
         heightCm: user.heightCm?.toString() || "",
         weightKg: user.weightKg?.toString() || "",
+        goal: user.goal || "",
+        programType: user.programType || "",
       })
 
       const loadSubscription = async () => {
@@ -100,16 +227,12 @@ export function EditMemberDialog({ user, open, onOpenChange, onMemberUpdated }: 
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-    if (!formData.email.trim()) {
-      newErrors.email = "Email is required"
-    } else if (!emailRegex.test(formData.email)) {
+    if (formData.email.trim() && !emailRegex.test(formData.email)) {
       newErrors.email = "Invalid email format"
     }
 
     const phoneRegex = /^\d{10,15}$/
-    if (!formData.phone.trim()) {
-      newErrors.phone = "Phone number is required"
-    } else if (!phoneRegex.test(formData.phone.replace(/\D/g, ""))) {
+    if (formData.phone.trim() && !phoneRegex.test(formData.phone.replace(/\D/g, ""))) {
       newErrors.phone = "Phone must be 10-15 digits"
     }
 
@@ -125,10 +248,15 @@ export function EditMemberDialog({ user, open, onOpenChange, onMemberUpdated }: 
       // Update user profile
       await storageService.updateUser(user.userId, {
         name: formData.name.trim(),
-        email: formData.email.trim(),
-        phone: formData.phone.trim(),
+        birthday: isValidDateString(formData.birthday) ? parseDate(formData.birthday)!.toISOString() : undefined,
+        age: formData.age ? parseInt(formData.age) : undefined,
+        address: formData.address.trim() || undefined,
+        email: formData.email.trim() || undefined,
+        phone: formData.phone.trim() || undefined,
         heightCm: formData.heightCm ? parseFloat(formData.heightCm) : undefined,
         weightKg: formData.weightKg ? parseFloat(formData.weightKg) : undefined,
+        goal: formData.goal.trim() || undefined,
+        programType: formData.programType.trim() || undefined,
       })
 
       if (subscription) {
@@ -158,7 +286,7 @@ export function EditMemberDialog({ user, open, onOpenChange, onMemberUpdated }: 
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Edit Member Profile</DialogTitle>
         </DialogHeader>
@@ -180,8 +308,30 @@ export function EditMemberDialog({ user, open, onOpenChange, onMemberUpdated }: 
             {errors.name && <p className="text-sm text-destructive">{errors.name}</p>}
           </div>
 
+          <div className="grid grid-cols-2 gap-4">
+            <DateInput
+              label="Birthday"
+              value={formData.birthday}
+              onChange={(value) => setFormData({ ...formData, birthday: value })}
+            />
+            <div className="space-y-2">
+              <Label>Age</Label>
+              <Input value={formData.age} disabled placeholder="Auto-calculated" className="bg-muted" />
+            </div>
+          </div>
+
           <div className="space-y-2">
-            <Label htmlFor="email">Email *</Label>
+            <Label htmlFor="address">Address</Label>
+            <Input
+              id="address"
+              value={formData.address}
+              onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+              placeholder="123 Main St"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="email">Email</Label>
             <Input
               id="email"
               type="email"
@@ -193,7 +343,7 @@ export function EditMemberDialog({ user, open, onOpenChange, onMemberUpdated }: 
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="phone">Phone Number *</Label>
+            <Label htmlFor="phone">Phone Number</Label>
             <Input
               id="phone"
               value={formData.phone}
@@ -231,6 +381,26 @@ export function EditMemberDialog({ user, open, onOpenChange, onMemberUpdated }: 
                 placeholder="70"
               />
             </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="goal">Goal</Label>
+            <Input
+              id="goal"
+              value={formData.goal}
+              onChange={(e) => setFormData({ ...formData, goal: e.target.value })}
+              placeholder="Weight loss, muscle gain, etc."
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="programType">Program Type</Label>
+            <Input
+              id="programType"
+              value={formData.programType}
+              onChange={(e) => setFormData({ ...formData, programType: e.target.value })}
+              placeholder="Strength training, cardio, etc."
+            />
           </div>
 
           <Separator className="my-4" />

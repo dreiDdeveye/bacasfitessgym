@@ -267,7 +267,7 @@ export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: A
 
       const membershipType = formData.availAnnualPlan === "yes" ? "new" : "walk-in"
       const planDuration = formData.availAnnualPlan === "no"
-        ? null
+        ? "walk-in"
         : formData.membershipCategory === "monthly"
           ? `${formData.subscriptionPlan} ${formData.subscriptionPlan === "1" ? "month" : "months"}`
           : formData.membershipCategory === "daily"
@@ -277,7 +277,7 @@ export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: A
       const subscription: Subscription = {
         userId,
         startDate: parseDate(formData.startDate)!.toISOString(),
-        endDate: parseDate(formData.endDate)!.toISOString(),
+        endDate: planDuration === "walk-in" ? new Date().toISOString() : parseDate(formData.endDate)!.toISOString(),
         status: "active",
         planDuration,
         membershipType,

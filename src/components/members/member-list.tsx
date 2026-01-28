@@ -17,6 +17,7 @@ import {
   Clock,
   Download,
   MoreVertical,
+  Filter,
 } from "lucide-react"
 import { QRCodeDisplay } from "../qr/qr-code-display"
 import {
@@ -38,6 +39,14 @@ import {
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu"
 
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+
 interface MemberListProps {
   users: User[]
   onUpdate: () => void
@@ -45,6 +54,9 @@ interface MemberListProps {
 
 export function MemberList({ users, onUpdate }: MemberListProps) {
   const [searchTerm, setSearchTerm] = useState("")
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "expired">("all")
+  const [planFilter, setPlanFilter] = useState<string>("all")
+  const [membershipTypeFilter, setMembershipTypeFilter] = useState<string>("all")
   const [filteredUsers, setFilteredUsers] = useState<User[]>(users)
   const [selectedUser, setSelectedUser] = useState<User | null>(null)
   const [showQR, setShowQR] = useState(false)
@@ -79,19 +91,48 @@ export function MemberList({ users, onUpdate }: MemberListProps) {
     loadSubscriptions()
   }, [users])
 
-  /* ---------------- SEARCH ---------------- */
+  /* ---------------- SEARCH & FILTER ---------------- */
   useEffect(() => {
     const term = searchTerm.toLowerCase()
+    
     setFilteredUsers(
-      users.filter(
-        (u) =>
+      users.filter((u) => {
+        // Search filter
+        const matchesSearch =
           u.name.toLowerCase().includes(term) ||
           (u.email && u.email.toLowerCase().includes(term)) ||
           (u.phone && u.phone.toLowerCase().includes(term)) ||
           u.userId.toLowerCase().includes(term)
-      )
+        
+        if (!matchesSearch) return false
+        
+        const sub = subscriptionCache.get(u.userId)
+        const active = isActive(sub)
+        
+        // Status filter
+        if (statusFilter === "active" && !active) return false
+        if (statusFilter === "expired" && active) return false
+        
+        // Plan duration filter
+        if (planFilter !== "all") {
+          if (planFilter === "walk-in") {
+            // Filter for walk-ins (no planDuration)
+            if (sub?.planDuration) return false
+          } else {
+            // Filter for specific plan durations
+            if (!sub?.planDuration || sub.planDuration !== planFilter) return false
+          }
+        }
+        
+        // Membership type filter
+        if (membershipTypeFilter !== "all") {
+          if (!sub?.membershipType || sub.membershipType !== membershipTypeFilter) return false
+        }
+        
+        return true
+      })
     )
-  }, [searchTerm, users])
+  }, [searchTerm, statusFilter, planFilter, membershipTypeFilter, users, subscriptionCache])
 
   const getSubscription = (userId: string): Subscription | null =>
     subscriptionCache.get(userId) ?? null
@@ -113,6 +154,33 @@ export function MemberList({ users, onUpdate }: MemberListProps) {
       day: "numeric",
     })
   }
+
+  const formatPlanDuration = (planDuration?: string | null) => {
+    if (!planDuration) return "Walk-in"
+    
+    const planMap: Record<string, string> = {
+      "1 month": "1 Month",
+      "6 months": "6 Months", 
+      "12 months": "1 Year",
+      "daily": "Daily",
+    }
+    
+    return planMap[planDuration] || planDuration
+  }
+
+  const formatMembershipType = (type?: string) => {
+    if (!type) return ""
+    return type.charAt(0).toUpperCase() + type.slice(1)
+  }
+
+  const clearAllFilters = () => {
+    setSearchTerm("")
+    setStatusFilter("all")
+    setPlanFilter("all")
+    setMembershipTypeFilter("all")
+  }
+
+  const hasActiveFilters = statusFilter !== "all" || planFilter !== "all" || membershipTypeFilter !== "all" || searchTerm !== ""
 
   /* ---------------- ACTIONS ---------------- */
   const handleDelete = async (userId: string) => {
@@ -207,6 +275,64 @@ export function MemberList({ users, onUpdate }: MemberListProps) {
         onChange={(e) => setSearchTerm(e.target.value)}
       />
 
+      {/* Filters */}
+      <div className="mb-4 flex gap-3 flex-wrap items-center">
+        {/* Status Filter */}
+        <Select value={statusFilter} onValueChange={(v: any) => setStatusFilter(v)}>
+          <SelectTrigger className="w-[160px]">
+            <Filter className="w-4 h-4 mr-2" />
+            <SelectValue placeholder="Status" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Status</SelectItem>
+            <SelectItem value="active">Active Only</SelectItem>
+            <SelectItem value="expired">Expired Only</SelectItem>
+          </SelectContent>
+        </Select>
+
+        {/* Plan Duration Filter */}
+        <Select value={planFilter} onValueChange={setPlanFilter}>
+          <SelectTrigger className="w-[160px]">
+            <Filter className="w-4 h-4 mr-2" />
+            <SelectValue placeholder="Plan" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Plans</SelectItem>
+            <SelectItem value="1 month">1 Month</SelectItem>
+            <SelectItem value="6 months">6 Months</SelectItem>
+            <SelectItem value="12 months">1 Year</SelectItem>
+            <SelectItem value="daily">Daily</SelectItem>
+            <SelectItem value="walk-in">Walk-in</SelectItem>
+          </SelectContent>
+        </Select>
+
+        {/* Membership Type Filter */}
+        <Select value={membershipTypeFilter} onValueChange={setMembershipTypeFilter}>
+          <SelectTrigger className="w-[160px]">
+            <Filter className="w-4 h-4 mr-2" />
+            <SelectValue placeholder="Type" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Types</SelectItem>
+            <SelectItem value="new">New</SelectItem>
+            <SelectItem value="renewal">Renewal</SelectItem>
+            <SelectItem value="walk-in">Walk-in</SelectItem>
+          </SelectContent>
+        </Select>
+
+        {/* Clear Filters Button */}
+        {hasActiveFilters && (
+          <Button variant="ghost" size="sm" onClick={clearAllFilters}>
+            Clear Filters
+          </Button>
+        )}
+
+        {/* Results Count */}
+        <div className="flex items-center text-sm text-muted-foreground ml-auto">
+          Showing {filteredUsers.length} of {users.length} members
+        </div>
+      </div>
+
       {/* Bulk Download */}
       <div className="mb-4 flex justify-end">
         <Button variant="outline" onClick={downloadTotalHoursCSV}>
@@ -240,6 +366,18 @@ export function MemberList({ users, onUpdate }: MemberListProps) {
                     <Badge variant={active ? "default" : "destructive"} className="text-xs">
                       {active ? "Active" : "Expired"}
                     </Badge>
+                    {/* Only show planDuration badge */}
+{sub?.planDuration && (
+  <Badge variant="secondary" className="text-xs">
+    {formatPlanDuration(sub.planDuration)}
+  </Badge>
+)}
+{/* Only show membershipType badge if it's NOT a walk-in (to avoid duplication) */}
+{sub?.membershipType && sub?.membershipType !== "walk-in" && (
+  <Badge variant="outline" className="text-xs">
+    {formatMembershipType(sub.membershipType)}
+  </Badge>
+)}
                     {isExpiringSoon(sub) && (
                       <Badge variant="outline" className="text-amber-500 text-xs">
                         <AlertTriangle className="w-3 h-3 mr-1" />
