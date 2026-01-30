@@ -26,6 +26,7 @@ import {
   Calendar,
   CalendarDays,
   CalendarClock,
+  Wifi,
 } from "lucide-react"
 import { useQRScanner } from "@/src/hooks/use-qr-scanner"
 import { accessService } from "@/src/services/access.service"
@@ -88,6 +89,10 @@ export function ScannerInterface() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all")
   const [membershipFilter, setMembershipFilter] = useState<MembershipFilter>("all")
 
+  // Real-time indicator
+  const [lastUpdate, setLastUpdate] = useState<Date>(new Date())
+  const [isOnline, setIsOnline] = useState(true)
+
   /* ---------------- HELPERS ---------------- */
 
   const formatDate = (date?: string) => {
@@ -120,6 +125,17 @@ export function ScannerInterface() {
       return `${mins}m`
     }
     return `${hours.toFixed(1)}h`
+  }
+
+  const formatLastUpdate = (date: Date) => {
+    const now = new Date()
+    const diffSeconds = Math.floor((now.getTime() - date.getTime()) / 1000)
+    
+    if (diffSeconds < 10) return "Just now"
+    if (diffSeconds < 60) return `${diffSeconds}s ago`
+    const diffMinutes = Math.floor(diffSeconds / 60)
+    if (diffMinutes < 60) return `${diffMinutes}m ago`
+    return date.toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit" })
   }
 
   /* ---------------- DETERMINE MEMBERSHIP TYPE ---------------- */
@@ -283,41 +299,50 @@ export function ScannerInterface() {
   /* ---------------- OPTIMIZED DASHBOARD STATS ---------------- */
 
   const updateStats = async () => {
-    // Fetch all data in parallel - MUCH FASTER!
-    const [sessions, logs, users, allSubscriptions] = await Promise.all([
-      storageService.getActiveSessions(),
-      storageService.getTodayScanLogs(),
-      storageService.getUsers(),
-      storageService.getSubscriptions(), // Get ALL subscriptions at once
-    ])
+    try {
+      // Fetch all data in parallel - MUCH FASTER!
+      const [sessions, logs, users, allSubscriptions] = await Promise.all([
+        storageService.getActiveSessions(),
+        storageService.getTodayScanLogs(),
+        storageService.getUsers(),
+        storageService.getSubscriptions(), // Get ALL subscriptions at once
+      ])
 
-    setActiveSessions(sessions.length)
-    setTodayCheckIns(logs.filter((l) => l.action === "check-in").length)
-    setTotalMembers(users.length)
+      setActiveSessions(sessions.length)
+      setTodayCheckIns(logs.filter((l) => l.action === "check-in").length)
+      setTotalMembers(users.length)
 
-    // Create a map for O(1) lookup instead of O(n) for each user
-    const subscriptionMap = new Map(
-      allSubscriptions.map(sub => [sub.userId, sub])
-    )
+      // Create a map for O(1) lookup instead of O(n) for each user
+      const subscriptionMap = new Map(
+        allSubscriptions.map(sub => [sub.userId, sub])
+      )
 
-    // Calculate membership type counts
-    let monthly = 0
-    let daily = 0
-    let walkin = 0
+      // Calculate membership type counts
+      let monthly = 0
+      let daily = 0
+      let walkin = 0
 
-    // Now loop through users with instant lookups - NO MORE SLOW DATABASE CALLS!
-    for (const user of users) {
-      const subscription = subscriptionMap.get(user.userId) || null
-      const type = getMembershipType(subscription)
+      // Now loop through users with instant lookups - NO MORE SLOW DATABASE CALLS!
+      for (const user of users) {
+        const subscription = subscriptionMap.get(user.userId) || null
+        const type = getMembershipType(subscription)
+        
+        if (type === "monthly") monthly++
+        else if (type === "daily") daily++
+        else if (type === "walkin") walkin++
+      }
+
+      setMonthlyCount(monthly)
+      setDailyCount(daily)
+      setWalkinCount(walkin)
       
-      if (type === "monthly") monthly++
-      else if (type === "daily") daily++
-      else if (type === "walkin") walkin++
+      // Update timestamp
+      setLastUpdate(new Date())
+      setIsOnline(true)
+    } catch (error) {
+      console.error("Error updating stats:", error)
+      setIsOnline(false)
     }
-
-    setMonthlyCount(monthly)
-    setDailyCount(daily)
-    setWalkinCount(walkin)
   }
 
   /* ---------------- SCAN ---------------- */
@@ -336,10 +361,31 @@ export function ScannerInterface() {
     if (!result.success) playExpiredSound()
 
     setLastScan({ ...result, subscription, user })
-    updateStats()
+    updateStats() // Update stats immediately after scan
   }
 
   const { isScanning } = useQRScanner(handleScan)
+
+  /* ---------------- REAL-TIME AUTO-REFRESH ---------------- */
+
+  useEffect(() => {
+    // Initial load
+    updateStats()
+
+    // Auto-refresh every 5 seconds
+    const interval = setInterval(() => {
+      updateStats()
+    }, 5000) // 5 seconds
+
+    return () => clearInterval(interval)
+  }, [])
+
+  // Also refresh when dialog is opened
+  useEffect(() => {
+    if (showMembersDialog) {
+      loadMembersWithStats()
+    }
+  }, [showMembersDialog])
 
   /* ---------------- FULLSCREEN KIOSK ---------------- */
 
@@ -355,7 +401,7 @@ export function ScannerInterface() {
     return () => window.removeEventListener("click", enterFullscreen)
   }, [])
 
-  /* ---------------- AUTO CLOSE ---------------- */
+  /* ---------------- AUTO CLOSE SCAN POPUP ---------------- */
 
   useEffect(() => {
     if (!lastScan) return
@@ -363,16 +409,11 @@ export function ScannerInterface() {
     return () => clearTimeout(t)
   }, [lastScan])
 
-  useEffect(() => {
-    updateStats()
-  }, [])
-
   /* ---------------- HANDLE MEMBERS CARD CLICK ---------------- */
 
   const handleMembersCardClick = (filter?: MembershipFilter) => {
     setMembershipFilter(filter || "all")
     setShowMembersDialog(true)
-    loadMembersWithStats()
   }
 
   /* ---------------- FILTERED MEMBERS ---------------- */
@@ -410,6 +451,14 @@ export function ScannerInterface() {
 
   return (
     <div className="space-y-6">
+      {/* Real-time Status Indicator */}
+      <div className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
+        <Wifi className={`w-3 h-3 ${isOnline ? "text-emerald-500" : "text-red-500"}`} />
+        <span>
+          {isOnline ? "Live" : "Offline"} • Updated {formatLastUpdate(lastUpdate)}
+        </span>
+      </div>
+
       {/* STATS ROW 1 */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card className="p-6">
