@@ -18,8 +18,6 @@ import {
   Tooltip,
 } from "recharts"
 import {
-  getDay,
-  getHours,
   format,
   subMonths,
   startOfYear,
@@ -28,18 +26,51 @@ import {
   startOfWeek,
   isAfter,
   subDays,
-  startOfMonth,
   endOfMonth,
   startOfWeek as getStartOfWeek,
   getDaysInMonth,
-  parseISO,
-  getWeekOfMonth,
   endOfWeek,
   isWithinInterval,
 } from "date-fns"
 import type { ScanLog } from "@/src/types"
 import { storageService } from "@/src/services/storage.service"
 import { TrendingUp, TrendingDown, Minus, Clock, Users, Calendar, Activity, Moon } from "lucide-react"
+
+// ─── Philippine Time helpers (UTC+8) ─────────────────────────────────────────
+// Supabase stores timestamps as UTC. We shift by +8h then use getUTC*() methods
+// so JS local timezone never interferes with date grouping.
+const PH_OFFSET_MS = 8 * 60 * 60 * 1000
+
+/** Shifts a UTC timestamp by +8h. Always use .getUTC*() on the result. */
+function toPHDate(timestamp: string): Date {
+  return new Date(new Date(timestamp).getTime() + PH_OFFSET_MS)
+}
+
+/** Returns "YYYY-MM-DD" in PH time */
+function toPHDateString(timestamp: string): string {
+  const d = toPHDate(timestamp)
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`
+}
+
+/**
+ * Returns current PH date fields as plain numbers.
+ * NEVER pass the raw shifted Date to date-fns functions or .toISOString() —
+ * that would double-apply the +8h offset.
+ */
+function nowPH() {
+  const d = toPHDate(new Date().toISOString())
+  return {
+    year:  d.getUTCFullYear(),
+    month: d.getUTCMonth(),   // 0-indexed
+    str:   `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`,
+  }
+}
+
+function phYear(ts: string)      { return toPHDate(ts).getUTCFullYear() }
+function phMonth(ts: string)     { return toPHDate(ts).getUTCMonth() }
+function phDayOfWeek(ts: string) { return toPHDate(ts).getUTCDay() }
+function phHour(ts: string)      { return toPHDate(ts).getUTCHours() }
+// ─────────────────────────────────────────────────────────────────────────────
 
 interface MonthlyData {
   month: string
@@ -68,11 +99,7 @@ const TIME_PAIRS: TimePair[] = Array.from({ length: 12 }, (_, i) => {
     const ampm = h >= 12 && h < 24 ? "PM" : "AM"
     return `${hour12} ${ampm}`
   }
-  return {
-    label: `${formatHour(start)} - ${formatHour(end)}`,
-    start,
-    end,
-  }
+  return { label: `${formatHour(start)} - ${formatHour(end)}`, start, end }
 })
 
 const last12Months = Array.from({ length: 12 }, (_, i) => {
@@ -92,7 +119,7 @@ const colors = [
 ]
 
 const CONTRIBUTION_COLORS = {
-  empty: "bg-zinc-800",
+  empty:  "bg-zinc-800",
   level1: "bg-emerald-900",
   level2: "bg-emerald-700",
   level3: "bg-emerald-500",
@@ -102,151 +129,106 @@ const CONTRIBUTION_COLORS = {
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
 const DAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 
-// Mini Sparkline Component
 function Sparkline({ data, color = "#10b981" }: { data: number[]; color?: string }) {
   if (data.length < 2) return null
   const max = Math.max(...data, 1)
   const min = Math.min(...data, 0)
   const range = max - min || 1
-  const width = 60
-  const height = 20
+  const width = 60, height = 20
   const points = data.map((v, i) => {
     const x = (i / (data.length - 1)) * width
     const y = height - ((v - min) / range) * (height - 4) - 2
     return `${x},${y}`
   }).join(" ")
-
   return (
     <svg width={width} height={height} className="opacity-70">
-      <polyline
-        fill="none"
-        stroke={color}
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        points={points}
-      />
+      <polyline fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" points={points} />
     </svg>
   )
 }
 
-// Mini Bar Chart Component
 function MiniBarChart({ data }: { data: { label: string; value: number }[] }) {
   const max = Math.max(...data.map(d => d.value), 1)
   return (
     <div className="flex items-end gap-[2px] h-5">
       {data.map((d, i) => (
-        <div
-          key={i}
-          className="w-[6px] bg-emerald-500/80 rounded-sm transition-all hover:bg-emerald-400"
+        <div key={i} className="w-[6px] bg-emerald-500/80 rounded-sm transition-all hover:bg-emerald-400"
           style={{ height: `${Math.max((d.value / max) * 100, d.value > 0 ? 10 : 0)}%` }}
-          title={`${d.label}: ${d.value}`}
-        />
+          title={`${d.label}: ${d.value}`} />
       ))}
     </div>
   )
 }
 
-// Trend Indicator Component
 function TrendIndicator({ current, previous, suffix = "" }: { current: number; previous: number; suffix?: string }) {
-  if (previous === 0 && current === 0) {
+  if (previous === 0 && current === 0)
     return <span className="text-[11px] text-muted-foreground flex items-center gap-1"><Minus className="w-3 h-3" /> No change</span>
-  }
-  
   const diff = current - previous
-  const percentChange = previous > 0 ? Math.round((diff / previous) * 100) : (current > 0 ? 100 : 0)
-  
-  if (diff > 0) {
-    return (
-      <span className="text-[11px] text-emerald-500 flex items-center gap-1">
-        <TrendingUp className="w-3 h-3" />
-        +{percentChange}% {suffix}
-      </span>
-    )
-  } else if (diff < 0) {
-    return (
-      <span className="text-[11px] text-red-400 flex items-center gap-1">
-        <TrendingDown className="w-3 h-3" />
-        {percentChange}% {suffix}
-      </span>
-    )
-  }
+  const pct = previous > 0 ? Math.round((diff / previous) * 100) : (current > 0 ? 100 : 0)
+  if (diff > 0) return <span className="text-[11px] text-emerald-500 flex items-center gap-1"><TrendingUp className="w-3 h-3" />+{pct}% {suffix}</span>
+  if (diff < 0) return <span className="text-[11px] text-red-400 flex items-center gap-1"><TrendingDown className="w-3 h-3" />{pct}% {suffix}</span>
   return <span className="text-[11px] text-muted-foreground flex items-center gap-1"><Minus className="w-3 h-3" /> No change</span>
 }
 
 export function AnalyticsDashboard() {
-  const [monthlyData, setMonthlyData] = useState<MonthlyData[]>([])
+  const [monthlyData, setMonthlyData]     = useState<MonthlyData[]>([])
   const [totalCheckIns, setTotalCheckIns] = useState(0)
-  const [peakHour, setPeakHour] = useState<number | null>(null)
-  const [quietestHour, setQuietestHour] = useState<number | null>(null)
-  const [busiestDay, setBusiestDay] = useState<number | null>(null)
-  const [avgDailyCheckIns, setAvgDailyCheckIns] = useState(0)
-  const [lineData, setLineData] = useState<any[]>([])
-  const [legendOpen, setLegendOpen] = useState<boolean>(false)
-  const [selectedMonth, setSelectedMonth] = useState<string>(last12Months[11].key)
-  const [selectedWeek, setSelectedWeek] = useState<string>("all")
-  const [allValidLogs, setAllValidLogs] = useState<ScanLog[]>([])
+  const [peakHour, setPeakHour]           = useState<number | null>(null)
+  const [quietestHour, setQuietestHour]   = useState<number | null>(null)
+  const [busiestDay, setBusiestDay]       = useState<number | null>(null)
+  const [lineData, setLineData]           = useState<any[]>([])
+  const [legendOpen, setLegendOpen]       = useState(false)
+  const [selectedMonth, setSelectedMonth] = useState(last12Months[11].key)
+  const [selectedWeek, setSelectedWeek]   = useState("all")
+  const [allValidLogs, setAllValidLogs]   = useState<ScanLog[]>([])
   const [contributionData, setContributionData] = useState<ContributionDay[]>([])
-  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear())
-  const [yearlyTotal, setYearlyTotal] = useState(0)
-  const [hoveredDay, setHoveredDay] = useState<ContributionDay | null>(null)
-  const [timeRange, setTimeRange] = useState<TimeRange>("month")
-  
-  // Comparison data
-  const [thisMonthCount, setThisMonthCount] = useState(0)
-  const [lastMonthCount, setLastMonthCount] = useState(0)
-  const [thisWeekCount, setThisWeekCount] = useState(0)
-  const [lastWeekCount, setLastWeekCount] = useState(0)
-  const [todayCount, setTodayCount] = useState(0)
-  const [yesterdayCount, setYesterdayCount] = useState(0)
+  const [selectedYear, setSelectedYear]   = useState(new Date().getFullYear())
+  const [yearlyTotal, setYearlyTotal]     = useState(0)
+  const [hoveredDay, setHoveredDay]       = useState<ContributionDay | null>(null)
+  const [timeRange, setTimeRange]         = useState<TimeRange>("month")
+
+  const [thisMonthCount, setThisMonthCount]   = useState(0)
+  const [lastMonthCount, setLastMonthCount]   = useState(0)
+  const [thisWeekCount, setThisWeekCount]     = useState(0)
+  const [lastWeekCount, setLastWeekCount]     = useState(0)
+  const [todayCount, setTodayCount]           = useState(0)
+  const [yesterdayCount, setYesterdayCount]   = useState(0)
   const [previousPeakHour, setPreviousPeakHour] = useState<number | null>(null)
-  
-  // Chart data
-  const [weeklyBreakdown, setWeeklyBreakdown] = useState<{ label: string; value: number }[]>([])
-  const [last7DaysData, setLast7DaysData] = useState<number[]>([])
+
+  const [weeklyBreakdown, setWeeklyBreakdown]   = useState<{ label: string; value: number }[]>([])
+  const [last7DaysData, setLast7DaysData]       = useState<number[]>([])
   const [hourlyDistribution, setHourlyDistribution] = useState<number[]>([])
-  
-  // Time-range specific data
-  const [filteredPeakHour, setFilteredPeakHour] = useState<number | null>(null)
+
+  const [filteredPeakHour, setFilteredPeakHour]         = useState<number | null>(null)
   const [filteredQuietestHour, setFilteredQuietestHour] = useState<number | null>(null)
-  const [filteredBusiestDay, setFilteredBusiestDay] = useState<number | null>(null)
+  const [filteredBusiestDay, setFilteredBusiestDay]     = useState<number | null>(null)
   const [filteredWeeklyBreakdown, setFilteredWeeklyBreakdown] = useState<{ label: string; value: number }[]>([])
   const [filteredHourlyDistribution, setFilteredHourlyDistribution] = useState<number[]>([])
   const [filteredAvgDaily, setFilteredAvgDaily] = useState(0)
 
-  // Get available weeks for the selected month
   const getAvailableWeeks = () => {
     const [year, month] = selectedMonth.split("-").map(Number)
     const monthStart = new Date(year, month - 1, 1)
-    const monthEnd = endOfMonth(monthStart)
-    
+    const monthEnd   = endOfMonth(monthStart)
     const weeks: { value: string; label: string }[] = [{ value: "all", label: "All Weeks" }]
-    
     let currentWeek = 1
     let currentDate = monthStart
-    
     while (currentDate <= monthEnd) {
       const weekStart = startOfWeek(currentDate, { weekStartsOn: 0 })
-      const weekEnd = endOfWeek(currentDate, { weekStartsOn: 0 })
-      
-      // Only add if week start is in the selected month
+      const weekEnd   = endOfWeek(currentDate, { weekStartsOn: 0 })
       if (weekStart.getMonth() === month - 1 || currentDate.getMonth() === month - 1) {
         weeks.push({
           value: `week${currentWeek}`,
           label: `Week ${currentWeek} (${format(Math.max(weekStart.getTime(), monthStart.getTime()), "MMM d")} - ${format(Math.min(weekEnd.getTime(), monthEnd.getTime()), "MMM d")})`
         })
       }
-      
       currentWeek++
-      currentDate = new Date(currentDate.getTime() + 7 * 24 * 60 * 60 * 1000) // Add 7 days
+      currentDate = new Date(currentDate.getTime() + 7 * 24 * 60 * 60 * 1000)
     }
-    
     return weeks
   }
 
-  useEffect(() => {
-    loadAnalytics()
-  }, [])
+  useEffect(() => { loadAnalytics() }, [])
 
   useEffect(() => {
     if (allValidLogs.length) {
@@ -255,350 +237,270 @@ export function AnalyticsDashboard() {
     }
   }, [allValidLogs, selectedMonth, selectedYear, selectedWeek])
 
-  // Update filtered stats when time range changes
+  // ── Time-range filtered stats ─────────────────────────────────────────────
   useEffect(() => {
     if (allValidLogs.length === 0) return
-    
-    const now = new Date()
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-    const thisMonthStart = startOfMonth(now)
-    const thisWeekStart = getStartOfWeek(now, { weekStartsOn: 0 })
-    const yearStart = startOfYear(now)
-    
-    // Filter logs based on time range
+
+    const ph      = nowPH()
+    const realNow = new Date() // use real Date for date-fns functions
+
+    const todayStr = ph.str
+    const thisWeekStartStr = toPHDateString(
+      getStartOfWeek(realNow, { weekStartsOn: 0 }).toISOString()
+    )
+
     let filteredLogs: ScanLog[] = []
     let daysInRange = 1
-    
+
     switch (timeRange) {
       case "today":
-        filteredLogs = allValidLogs.filter(l => new Date(l.timestamp) >= todayStart)
+        filteredLogs = allValidLogs.filter(l => toPHDateString(l.timestamp) === todayStr)
         daysInRange = 1
         break
-      case "week": {
-        filteredLogs = allValidLogs.filter(l => new Date(l.timestamp) >= thisWeekStart)
+      case "week":
+        filteredLogs = allValidLogs.filter(l => toPHDateString(l.timestamp) >= thisWeekStartStr)
         daysInRange = 7
         break
-      }
-      case "month": {
-        filteredLogs = allValidLogs.filter(l => new Date(l.timestamp) >= thisMonthStart)
-        daysInRange = getDaysInMonth(now)
+      case "month":
+        filteredLogs = allValidLogs.filter(l =>
+          phYear(l.timestamp) === ph.year && phMonth(l.timestamp) === ph.month
+        )
+        daysInRange = getDaysInMonth(realNow)
         break
-      }
-      case "year": {
-        filteredLogs = allValidLogs.filter(l => new Date(l.timestamp) >= yearStart)
+      case "year":
+        filteredLogs = allValidLogs.filter(l => phYear(l.timestamp) === ph.year)
         daysInRange = 12
         break
-      }
       case "all":
       default:
         filteredLogs = allValidLogs
         daysInRange = 365
         break
     }
-    
+
     daysInRange = Math.max(1, daysInRange)
-    
-    // Calculate peak hour for filtered range
+
     const hourMap = new Map<number, number>()
-    filteredLogs.forEach((log) => {
-      const date = new Date(log.timestamp)
-      if (isNaN(date.getTime())) return
-      const hour = getHours(date)
-      hourMap.set(hour, (hourMap.get(hour) || 0) + 1)
+    filteredLogs.forEach(log => {
+      const h = phHour(log.timestamp)
+      hourMap.set(h, (hourMap.get(h) || 0) + 1)
     })
-    
-    let maxHour: number | null = null
-    let maxCount = 0
-    let minHour: number | null = null
-    let minCount = Infinity
-    
+    let maxHour: number | null = null, maxCount = 0
+    let minHour: number | null = null, minCount = Infinity
     hourMap.forEach((count, hour) => {
-      if (count > maxCount) {
-        maxCount = count
-        maxHour = hour
-      }
-      if (hour >= 5 && hour <= 23 && count < minCount && count > 0) {
-        minCount = count
-        minHour = hour
-      }
+      if (count > maxCount) { maxCount = count; maxHour = hour }
+      if (hour >= 5 && hour <= 23 && count < minCount && count > 0) { minCount = count; minHour = hour }
     })
     setFilteredPeakHour(maxHour)
     setFilteredQuietestHour(minHour)
-    
-    // Hourly distribution for filtered range
-    const hourlyData = Array.from({ length: 24 }, (_, i) => hourMap.get(i) || 0)
-    setFilteredHourlyDistribution(hourlyData)
-    
-    // Busiest day for filtered range
+    setFilteredHourlyDistribution(Array.from({ length: 24 }, (_, i) => hourMap.get(i) || 0))
+
     const dayMap = new Map<number, number>()
-    filteredLogs.forEach((log) => {
-      const date = new Date(log.timestamp)
-      if (isNaN(date.getTime())) return
-      const day = getDay(date)
-      dayMap.set(day, (dayMap.get(day) || 0) + 1)
+    filteredLogs.forEach(log => {
+      const d = phDayOfWeek(log.timestamp)
+      dayMap.set(d, (dayMap.get(d) || 0) + 1)
     })
-    
-    let maxDay: number | null = null
-    let maxDayCount = 0
-    dayMap.forEach((count, day) => {
-      if (count > maxDayCount) {
-        maxDayCount = count
-        maxDay = day
-      }
-    })
+    let maxDay: number | null = null, maxDayCount = 0
+    dayMap.forEach((count, day) => { if (count > maxDayCount) { maxDayCount = count; maxDay = day } })
     setFilteredBusiestDay(maxDay)
-    
-    // Weekly breakdown for filtered range
-    const weekBreakdown = DAY_SHORT.map((label, i) => ({
-      label,
-      value: dayMap.get(i) || 0
-    }))
-    setFilteredWeeklyBreakdown(weekBreakdown)
-    
-    // Average daily for filtered range
-    const avgDaily = Math.round(filteredLogs.length / daysInRange)
-    setFilteredAvgDaily(avgDaily)
-    
+    setFilteredWeeklyBreakdown(DAY_SHORT.map((label, i) => ({ label, value: dayMap.get(i) || 0 })))
+    setFilteredAvgDaily(Math.round(filteredLogs.length / daysInRange))
+
   }, [timeRange, allValidLogs])
 
+  // ── Main analytics loader ─────────────────────────────────────────────────
   async function loadAnalytics() {
     const logs = await storageService.getScanLogs()
-    const validLogs = logs.filter(
-      (l) => l.action === "check-in" && l.status === "success"
-    )
+
+    // ── DEBUG: remove after fixing ──────────────────────────────────────────
+    console.log("🔍 TOTAL LOGS FETCHED:", logs.length)
+    if (logs[0]) {
+      console.log("🔍 FIRST LOG raw timestamp:", logs[0].timestamp)
+      console.log("🔍 FIRST LOG action:", logs[0].action, "| status:", logs[0].status)
+    }
+    const validLogs = logs.filter(l => l.action === "check-in" && l.status === "success")
+    console.log("🔍 VALID CHECK-INS:", validLogs.length)
+    const janRaw = validLogs.filter(l => {
+      const ts = l.timestamp as string
+      return ts.startsWith("2026-01") || ts.includes("-01-")
+    })
+    console.log("🔍 JAN LOGS (raw UTC startsWith 2026-01):", janRaw.length)
+    const janPH = validLogs.filter(l => {
+      const d = new Date(new Date(l.timestamp).getTime() + 8 * 60 * 60 * 1000)
+      return d.getUTCFullYear() === 2026 && d.getUTCMonth() === 0
+    })
+    console.log("🔍 JAN LOGS (PH timezone):", janPH.length)
+    const febPH = validLogs.filter(l => {
+      const d = new Date(new Date(l.timestamp).getTime() + 8 * 60 * 60 * 1000)
+      return d.getUTCFullYear() === 2026 && d.getUTCMonth() === 1
+    })
+    console.log("🔍 FEB LOGS (PH timezone):", febPH.length)
+    // ── END DEBUG ────────────────────────────────────────────────────────────
+
     setAllValidLogs(validLogs)
     setTotalCheckIns(validLogs.length)
 
-    const now = new Date()
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-    const yesterdayStart = subDays(todayStart, 1)
-    const thisMonthStart = startOfMonth(now)
-    const lastMonthStart = startOfMonth(subMonths(now, 1))
-    const lastMonthEnd = endOfMonth(subMonths(now, 1))
-    const thisWeekStart = getStartOfWeek(now, { weekStartsOn: 0 })
-    const lastWeekStart = subDays(thisWeekStart, 7)
-    const lastWeekEnd = subDays(thisWeekStart, 1)
+    const ph      = nowPH()
+    const realNow = new Date() // use real Date for date-fns, NOT the shifted ph object
+
+    const todayStr     = ph.str
+    const yesterdayStr = toPHDateString(subDays(realNow, 1).toISOString())
+
+    const thisWeekStartStr = toPHDateString(
+      getStartOfWeek(realNow, { weekStartsOn: 0 }).toISOString()
+    )
+    const lastWeekStartStr = toPHDateString(
+      subDays(getStartOfWeek(realNow, { weekStartsOn: 0 }), 7).toISOString()
+    )
+    const lastWeekEndStr = toPHDateString(
+      subDays(getStartOfWeek(realNow, { weekStartsOn: 0 }), 1).toISOString()
+    )
+
+    const thisMonthY = ph.year
+    const thisMonthM = ph.month
+
+    // Last month: subtract from real date, then read in PH time
+    const lastMonthDate = subMonths(realNow, 1)
+    const lastMonthY    = toPHDate(lastMonthDate.toISOString()).getUTCFullYear()
+    const lastMonthM    = toPHDate(lastMonthDate.toISOString()).getUTCMonth()
 
     // Today vs Yesterday
-    const todayLogs = validLogs.filter(l => new Date(l.timestamp) >= todayStart)
-    const yesterdayLogs = validLogs.filter(l => {
-      const d = new Date(l.timestamp)
-      return d >= yesterdayStart && d < todayStart
-    })
-    setTodayCount(todayLogs.length)
-    setYesterdayCount(yesterdayLogs.length)
+    setTodayCount(validLogs.filter(l => toPHDateString(l.timestamp) === todayStr).length)
+    setYesterdayCount(validLogs.filter(l => toPHDateString(l.timestamp) === yesterdayStr).length)
 
     // This month vs Last month
-    const thisMonthLogs = validLogs.filter(l => new Date(l.timestamp) >= thisMonthStart)
-    const lastMonthLogs = validLogs.filter(l => {
-      const d = new Date(l.timestamp)
-      return d >= lastMonthStart && d <= lastMonthEnd
-    })
+    const thisMonthLogs = validLogs.filter(l => phYear(l.timestamp) === thisMonthY && phMonth(l.timestamp) === thisMonthM)
+    const lastMonthLogs = validLogs.filter(l => phYear(l.timestamp) === lastMonthY  && phMonth(l.timestamp) === lastMonthM)
     setThisMonthCount(thisMonthLogs.length)
     setLastMonthCount(lastMonthLogs.length)
 
     // This week vs Last week
-    const thisWeekLogs = validLogs.filter(l => new Date(l.timestamp) >= thisWeekStart)
-    const lastWeekLogs = validLogs.filter(l => {
-      const d = new Date(l.timestamp)
-      return d >= lastWeekStart && d <= lastWeekEnd
-    })
-    setThisWeekCount(thisWeekLogs.length)
-    setLastWeekCount(lastWeekLogs.length)
+    setThisWeekCount(validLogs.filter(l => toPHDateString(l.timestamp) >= thisWeekStartStr).length)
+    setLastWeekCount(validLogs.filter(l => {
+      const s = toPHDateString(l.timestamp)
+      return s >= lastWeekStartStr && s <= lastWeekEndStr
+    }).length)
 
-    // Peak hour calculation
+    // Peak / quietest hour
     const hourMap = new Map<number, number>()
-    validLogs.forEach((log) => {
-      const date = new Date(log.timestamp)
-      if (isNaN(date.getTime())) return
-      const hour = getHours(date)
-      hourMap.set(hour, (hourMap.get(hour) || 0) + 1)
+    validLogs.forEach(log => {
+      const h = phHour(log.timestamp)
+      hourMap.set(h, (hourMap.get(h) || 0) + 1)
     })
-    
-    let maxHour: number | null = null
-    let maxCount = 0
-    let minHour: number | null = null
-    let minCount = Infinity
-    
+    let maxHour: number | null = null, maxCount = 0
+    let minHour: number | null = null, minCount = Infinity
     hourMap.forEach((count, hour) => {
-      if (count > maxCount) {
-        maxCount = count
-        maxHour = hour
-      }
-      if (hour >= 5 && hour <= 23 && count < minCount && count > 0) {
-        minCount = count
-        minHour = hour
-      }
+      if (count > maxCount) { maxCount = count; maxHour = hour }
+      if (hour >= 5 && hour <= 23 && count < minCount && count > 0) { minCount = count; minHour = hour }
     })
     setPeakHour(maxHour)
     setQuietestHour(minHour)
-
-    // Hourly distribution for sparkline
-    const hourlyData = Array.from({ length: 24 }, (_, i) => hourMap.get(i) || 0)
-    setHourlyDistribution(hourlyData)
+    setHourlyDistribution(Array.from({ length: 24 }, (_, i) => hourMap.get(i) || 0))
 
     // Previous month peak hour
-    const lastMonthHourMap = new Map<number, number>()
-    lastMonthLogs.forEach((log) => {
-      const hour = getHours(new Date(log.timestamp))
-      lastMonthHourMap.set(hour, (lastMonthHourMap.get(hour) || 0) + 1)
+    const pmHourMap = new Map<number, number>()
+    lastMonthLogs.forEach(log => {
+      const h = phHour(log.timestamp)
+      pmHourMap.set(h, (pmHourMap.get(h) || 0) + 1)
     })
-    let prevMaxHour: number | null = null
-    let prevMaxCount = 0
-    lastMonthHourMap.forEach((count, hour) => {
-      if (count > prevMaxCount) {
-        prevMaxCount = count
-        prevMaxHour = hour
-      }
-    })
+    let prevMaxHour: number | null = null, prevMaxCount = 0
+    pmHourMap.forEach((count, hour) => { if (count > prevMaxCount) { prevMaxCount = count; prevMaxHour = hour } })
     setPreviousPeakHour(prevMaxHour)
 
-    // Busiest day of week
+    // Busiest day
     const dayMap = new Map<number, number>()
-    validLogs.forEach((log) => {
-      const date = new Date(log.timestamp)
-      if (isNaN(date.getTime())) return
-      const day = getDay(date)
-      dayMap.set(day, (dayMap.get(day) || 0) + 1)
+    validLogs.forEach(log => {
+      const d = phDayOfWeek(log.timestamp)
+      dayMap.set(d, (dayMap.get(d) || 0) + 1)
     })
-    
-    let maxDay: number | null = null
-    let maxDayCount = 0
-    dayMap.forEach((count, day) => {
-      if (count > maxDayCount) {
-        maxDayCount = count
-        maxDay = day
-      }
-    })
+    let maxDay: number | null = null, maxDayCount = 0
+    dayMap.forEach((count, day) => { if (count > maxDayCount) { maxDayCount = count; maxDay = day } })
     setBusiestDay(maxDay)
+    setWeeklyBreakdown(DAY_SHORT.map((label, i) => ({ label, value: dayMap.get(i) || 0 })))
 
-    // Weekly breakdown for mini bar chart
-    const weekBreakdown = DAY_SHORT.map((label, i) => ({
-      label,
-      value: dayMap.get(i) || 0
-    }))
-    setWeeklyBreakdown(weekBreakdown)
-
-    // Last 7 days data for sparkline
-    const last7Days: number[] = []
+    // Last 7 days sparkline
+    const last7: number[] = []
     for (let i = 6; i >= 0; i--) {
-      const dayStart = subDays(todayStart, i)
-      const dayEnd = subDays(todayStart, i - 1)
-      const count = validLogs.filter(l => {
-        const d = new Date(l.timestamp)
-        return d >= dayStart && d < dayEnd
-      }).length
-      last7Days.push(count)
+      const s = toPHDateString(subDays(realNow, i).toISOString())
+      last7.push(validLogs.filter(l => toPHDateString(l.timestamp) === s).length)
     }
-    setLast7DaysData(last7Days)
+    setLast7DaysData(last7)
 
-    // Average daily check-ins (last 30 days)
-    const last30DaysStart = subDays(now, 30)
-    const last30DaysLogs = validLogs.filter(l => new Date(l.timestamp) >= last30DaysStart)
-    const avgDaily = Math.round(last30DaysLogs.length / 30)
-    setAvgDailyCheckIns(avgDaily)
-
-    // Monthly trend
+    // Monthly trend — use real dates for subMonths, read year/month in PH time
     const monthly: MonthlyData[] = []
     for (let i = 11; i >= 0; i--) {
-      const monthDate = subMonths(new Date(), i)
-      const key = format(monthDate, "yyyy-MM")
-      const count = validLogs.filter(
-        (log) => format(new Date(log.timestamp), "yyyy-MM") === key
-      ).length
+      const monthDate = subMonths(realNow, i)
+      const y = toPHDate(monthDate.toISOString()).getUTCFullYear()
+      const m = toPHDate(monthDate.toISOString()).getUTCMonth()
       monthly.push({
         month: format(monthDate, "MMM"),
-        checkIns: count,
+        checkIns: validLogs.filter(l => phYear(l.timestamp) === y && phMonth(l.timestamp) === m).length
       })
     }
     setMonthlyData(monthly)
   }
 
+  // ── Contribution heatmap ──────────────────────────────────────────────────
   function generateContributionData(year: number) {
     const yearStart = startOfYear(new Date(year, 0, 1))
-    const yearEnd = endOfYear(new Date(year, 0, 1))
-
-    const allDays = eachDayOfInterval({ start: yearStart, end: yearEnd })
+    const yearEnd   = endOfYear(new Date(year, 0, 1))
+    const allDays   = eachDayOfInterval({ start: yearStart, end: yearEnd })
 
     const dayCountMap = new Map<string, number>()
-    allValidLogs.forEach((log) => {
-      const logDate = new Date(log.timestamp)
-      if (logDate.getFullYear() === year) {
-        const dateKey = format(logDate, "yyyy-MM-dd")
+    allValidLogs.forEach(log => {
+      const dateKey = toPHDateString(log.timestamp)
+      if (dateKey.startsWith(String(year))) {
         dayCountMap.set(dateKey, (dayCountMap.get(dateKey) || 0) + 1)
       }
     })
 
-    const contribution: ContributionDay[] = allDays.map((date) => {
+    setContributionData(allDays.map(date => {
       const dateString = format(date, "yyyy-MM-dd")
-      return {
-        date,
-        count: dayCountMap.get(dateString) || 0,
-        dateString,
-      }
-    })
-
-    setContributionData(contribution)
-
-    const total = Array.from(dayCountMap.values()).reduce((sum, c) => sum + c, 0)
-    setYearlyTotal(total)
+      return { date, count: dayCountMap.get(dateString) || 0, dateString }
+    }))
+    setYearlyTotal(Array.from(dayCountMap.values()).reduce((sum, c) => sum + c, 0))
   }
 
+  // ── Line chart ────────────────────────────────────────────────────────────
   function updateLineDataForMonth(monthKey: string, weekFilter: string) {
-    let filteredLogs = allValidLogs.filter(
-      (log) => format(new Date(log.timestamp), "yyyy-MM") === monthKey
-    )
-    
-    // Apply week filter if not "all"
+    let filteredLogs = allValidLogs.filter(log => {
+      const y = phYear(log.timestamp)
+      const m = phMonth(log.timestamp) + 1
+      return `${y}-${String(m).padStart(2, "0")}` === monthKey
+    })
+
     if (weekFilter !== "all") {
       const weekNumber = parseInt(weekFilter.replace("week", ""))
       const [year, month] = monthKey.split("-").map(Number)
       const monthStart = new Date(year, month - 1, 1)
-      const monthEnd = endOfMonth(monthStart)
-      
-      // Calculate the start and end of the selected week
-      let weekStart = new Date(monthStart)
-      let weekEnd = new Date(monthStart)
-      
-      // Find the start of the selected week
-      let currentWeek = 1
-      let currentDate = monthStart
-      
+      const monthEnd   = endOfMonth(monthStart)
+
+      let currentWeek = 1, currentDate = monthStart
       while (currentWeek < weekNumber && currentDate <= monthEnd) {
         currentDate = new Date(currentDate.getTime() + 7 * 24 * 60 * 60 * 1000)
         currentWeek++
       }
-      
-      weekStart = startOfWeek(currentDate, { weekStartsOn: 0 })
-      weekEnd = endOfWeek(currentDate, { weekStartsOn: 0 })
-      
-      // Make sure we stay within the month boundaries
-      weekStart = new Date(Math.max(weekStart.getTime(), monthStart.getTime()))
-      weekEnd = new Date(Math.min(weekEnd.getTime(), monthEnd.getTime()))
-      
-      filteredLogs = filteredLogs.filter((log) => {
-        const logDate = new Date(log.timestamp)
-        return isWithinInterval(logDate, { start: weekStart, end: weekEnd })
+
+      const weekStart = new Date(Math.max(startOfWeek(currentDate, { weekStartsOn: 0 }).getTime(), monthStart.getTime()))
+      const weekEnd   = new Date(Math.min(endOfWeek(currentDate, { weekStartsOn: 0 }).getTime(), monthEnd.getTime()))
+      const wsStr = format(weekStart, "yyyy-MM-dd")
+      const weStr = format(weekEnd,   "yyyy-MM-dd")
+
+      filteredLogs = filteredLogs.filter(log => {
+        const s = toPHDateString(log.timestamp)
+        return s >= wsStr && s <= weStr
       })
     }
-    
+
     const data: any[] = []
     for (let day = 0; day < 7; day++) {
-      const dayLabel = DAY_SHORT[day]
-      const obj: any = { day: dayLabel }
+      const obj: any = { day: DAY_SHORT[day] }
       TIME_PAIRS.forEach(({ label, start, end }) => {
-        const count = filteredLogs.filter((log) => {
-          const date = new Date(log.timestamp)
-          const hour = getHours(date)
-          const normalizedHour = hour === 0 ? 24 : hour
-          return (
-            getDay(date) === day &&
-            (normalizedHour === start || normalizedHour === end) &&
-            log.action === "check-in" &&
-            log.status === "success"
-          )
+        obj[label] = filteredLogs.filter(log => {
+          const h  = phHour(log.timestamp)
+          const nh = h === 0 ? 24 : h
+          return phDayOfWeek(log.timestamp) === day && (nh === start || nh === end)
         }).length
-        obj[label] = count
       })
       data.push(obj)
     }
@@ -607,116 +509,65 @@ export function AnalyticsDashboard() {
 
   function getContributionColor(count: number, maxCount: number): string {
     if (count === 0) return CONTRIBUTION_COLORS.empty
-    const ratio = count / maxCount
-    if (ratio <= 0.25) return CONTRIBUTION_COLORS.level1
-    if (ratio <= 0.5) return CONTRIBUTION_COLORS.level2
-    if (ratio <= 0.75) return CONTRIBUTION_COLORS.level3
+    const r = count / maxCount
+    if (r <= 0.25) return CONTRIBUTION_COLORS.level1
+    if (r <= 0.5)  return CONTRIBUTION_COLORS.level2
+    if (r <= 0.75) return CONTRIBUTION_COLORS.level3
     return CONTRIBUTION_COLORS.level4
   }
 
   function getWeeksData() {
     if (contributionData.length === 0) return []
-
     const weeks: ContributionDay[][] = []
     let currentWeek: ContributionDay[] = []
 
-    const yearStart = new Date(selectedYear, 0, 1)
+    const yearStart   = new Date(selectedYear, 0, 1)
     const firstSunday = startOfWeek(yearStart, { weekStartsOn: 0 })
 
-    const daysBeforeYear = eachDayOfInterval({
-      start: firstSunday,
-      end: new Date(selectedYear, 0, 0),
-    })
-
-    daysBeforeYear.forEach((date) => {
-      currentWeek.push({
-        date,
-        count: -1,
-        dateString: format(date, "yyyy-MM-dd"),
+    if (firstSunday < yearStart) {
+      eachDayOfInterval({ start: firstSunday, end: new Date(selectedYear, 0, 0) }).forEach(date => {
+        currentWeek.push({ date, count: -1, dateString: format(date, "yyyy-MM-dd") })
       })
-    })
+    }
 
-    contributionData.forEach((day) => {
+    contributionData.forEach(day => {
       currentWeek.push(day)
-
-      if (currentWeek.length === 7) {
-        weeks.push(currentWeek)
-        currentWeek = []
-      }
+      if (currentWeek.length === 7) { weeks.push(currentWeek); currentWeek = [] }
     })
 
     if (currentWeek.length > 0) {
-      while (currentWeek.length < 7) {
-        currentWeek.push({
-          date: new Date(),
-          count: -1,
-          dateString: "",
-        })
-      }
+      while (currentWeek.length < 7) currentWeek.push({ date: new Date(), count: -1, dateString: "" })
       weeks.push(currentWeek)
     }
-
     return weeks
   }
 
   function getMonthLabels() {
     const months: { label: string; weekIndex: number }[] = []
-    const weeks = getWeeksData()
-
     let currentMonth = -1
-    weeks.forEach((week, weekIndex) => {
-      const firstValidDay = week.find((d) => d.count >= 0)
+    getWeeksData().forEach((week, weekIndex) => {
+      const firstValidDay = week.find(d => d.count >= 0)
       if (firstValidDay) {
         const month = firstValidDay.date.getMonth()
         if (month !== currentMonth) {
           currentMonth = month
-          months.push({
-            label: format(firstValidDay.date, "MMM"),
-            weekIndex,
-          })
+          months.push({ label: format(firstValidDay.date, "MMM"), weekIndex })
         }
       }
     })
-
     return months
   }
 
-  const weeks = getWeeksData()
+  const weeks       = getWeeksData()
   const monthLabels = getMonthLabels()
-  const maxDayCount = Math.max(...contributionData.map((d) => d.count), 1)
-
+  const maxDayCount = Math.max(...contributionData.map(d => d.count), 1)
   const currentYear = new Date().getFullYear()
   const yearOptions = Array.from({ length: 5 }, (_, i) => currentYear - i)
   const availableWeeks = getAvailableWeeks()
 
-  // Get current display count based on time range
-  const getDisplayCount = () => {
-    switch (timeRange) {
-      case "today": return todayCount
-      case "week": return thisWeekCount
-      case "month": return thisMonthCount
-      case "year": return yearlyTotal
-      case "all": return totalCheckIns
-    }
-  }
-
-  const getPreviousCount = () => {
-    switch (timeRange) {
-      case "today": return yesterdayCount
-      case "week": return lastWeekCount
-      case "month": return lastMonthCount
-      default: return 0
-    }
-  }
-
-  const getComparisonLabel = () => {
-    switch (timeRange) {
-      case "today": return "vs yesterday"
-      case "week": return "vs last week"
-      case "month": return "vs last month"
-      default: return ""
-    }
-  }
+  const getDisplayCount = () => ({ today: todayCount, week: thisWeekCount, month: thisMonthCount, year: yearlyTotal, all: totalCheckIns }[timeRange])
+  const getPreviousCount = () => ({ today: yesterdayCount, week: lastWeekCount, month: lastMonthCount, year: 0, all: 0 }[timeRange])
+  const getComparisonLabel = () => ({ today: "vs yesterday", week: "vs last week", month: "vs last month", year: "", all: "" }[timeRange])
 
   return (
     <div className="space-y-6">
@@ -725,42 +576,27 @@ export function AnalyticsDashboard() {
         <span className="text-sm text-muted-foreground">View:</span>
         <div className="flex gap-1 bg-zinc-800/50 rounded-lg p-1">
           {(["today", "week", "month", "year", "all"] as TimeRange[]).map((range) => (
-            <button
-              key={range}
-              onClick={() => setTimeRange(range)}
-              className={`px-3 py-1.5 text-sm rounded-md transition-all ${
-                timeRange === range
-                  ? "bg-emerald-600 text-white shadow-sm"
-                  : "text-muted-foreground hover:text-foreground hover:bg-zinc-700/50"
-              }`}
-            >
+            <button key={range} onClick={() => setTimeRange(range)}
+              className={`px-3 py-1.5 text-sm rounded-md transition-all ${timeRange === range ? "bg-emerald-600 text-white shadow-sm" : "text-muted-foreground hover:text-foreground hover:bg-zinc-700/50"}`}>
               {range.charAt(0).toUpperCase() + range.slice(1)}
             </button>
           ))}
         </div>
       </div>
 
-      {/* Primary Stats - 4 columns */}
+      {/* Primary Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Total Check-ins */}
         <Card className="bg-zinc-900/30 border-zinc-800">
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
-              <CardDescription className="flex items-center gap-2 text-xs">
-                <Users className="w-3.5 h-3.5" />
-                Check-ins
-              </CardDescription>
-              <Sparkline data={timeRange === "all" ? last7DaysData : filteredHourlyDistribution.length ? last7DaysData : []} />
+              <CardDescription className="flex items-center gap-2 text-xs"><Users className="w-3.5 h-3.5" />Check-ins</CardDescription>
+              <Sparkline data={last7DaysData} />
             </div>
             <CardTitle className="text-3xl font-bold tracking-tight">{getDisplayCount()}</CardTitle>
           </CardHeader>
           <CardContent className="pt-0">
             {timeRange !== "year" && timeRange !== "all" && (
-              <TrendIndicator 
-                current={getDisplayCount()} 
-                previous={getPreviousCount()} 
-                suffix={getComparisonLabel()}
-              />
+              <TrendIndicator current={getDisplayCount()} previous={getPreviousCount()} suffix={getComparisonLabel()} />
             )}
             <p className="text-[10px] text-muted-foreground mt-1.5 leading-tight">
               All recorded entries for {timeRange === "all" ? "all time" : `this ${timeRange}`}
@@ -768,117 +604,79 @@ export function AnalyticsDashboard() {
           </CardContent>
         </Card>
 
-        {/* Peak Hour */}
         <Card className="bg-zinc-900/30 border-zinc-800">
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
-              <CardDescription className="flex items-center gap-2 text-xs">
-                <Clock className="w-3.5 h-3.5" />
-                Peak Hour
-              </CardDescription>
+              <CardDescription className="flex items-center gap-2 text-xs"><Clock className="w-3.5 h-3.5" />Peak Hour</CardDescription>
               <Sparkline data={filteredHourlyDistribution.length ? filteredHourlyDistribution : hourlyDistribution} color="#f59e0b" />
             </div>
             <CardTitle className="text-3xl font-bold tracking-tight">
-              {filteredPeakHour !== null ? formatHourLabel(filteredPeakHour) : (peakHour !== null ? formatHourLabel(peakHour) : "N/A")}
+              {filteredPeakHour !== null ? formatHourLabel(filteredPeakHour) : peakHour !== null ? formatHourLabel(peakHour) : "N/A"}
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-0">
-            {previousPeakHour !== null && filteredPeakHour !== null && filteredPeakHour !== previousPeakHour ? (
-              <span className="text-[11px] text-amber-500 flex items-center gap-1">
-                <Activity className="w-3 h-3" />
-                Different from last month ({formatHourLabel(previousPeakHour)})
-              </span>
-            ) : (
-              <span className="text-[11px] text-muted-foreground flex items-center gap-1">
-                <Minus className="w-3 h-3" /> Consistent
-              </span>
-            )}
-            <p className="text-[10px] text-muted-foreground mt-1.5 leading-tight">
-              Most active check-in time ({timeRange})
-            </p>
+            {previousPeakHour !== null && filteredPeakHour !== null && filteredPeakHour !== previousPeakHour
+              ? <span className="text-[11px] text-amber-500 flex items-center gap-1"><Activity className="w-3 h-3" />Different from last month ({formatHourLabel(previousPeakHour)})</span>
+              : <span className="text-[11px] text-muted-foreground flex items-center gap-1"><Minus className="w-3 h-3" /> Consistent</span>}
+            <p className="text-[10px] text-muted-foreground mt-1.5 leading-tight">Most active check-in time ({timeRange})</p>
           </CardContent>
         </Card>
 
-        {/* Busiest Day */}
         <Card className="bg-zinc-900/30 border-zinc-800">
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
-              <CardDescription className="flex items-center gap-2 text-xs">
-                <Calendar className="w-3.5 h-3.5" />
-                Busiest Day
-              </CardDescription>
+              <CardDescription className="flex items-center gap-2 text-xs"><Calendar className="w-3.5 h-3.5" />Busiest Day</CardDescription>
               <MiniBarChart data={filteredWeeklyBreakdown.length ? filteredWeeklyBreakdown : weeklyBreakdown} />
             </div>
             <CardTitle className="text-3xl font-bold tracking-tight">
-              {filteredBusiestDay !== null ? DAY_SHORT[filteredBusiestDay] : (busiestDay !== null ? DAY_SHORT[busiestDay] : "N/A")}
+              {filteredBusiestDay !== null ? DAY_SHORT[filteredBusiestDay] : busiestDay !== null ? DAY_SHORT[busiestDay] : "N/A"}
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-0">
             <span className="text-[11px] text-emerald-500">
-              {filteredBusiestDay !== null ? DAY_NAMES[filteredBusiestDay] : (busiestDay !== null ? DAY_NAMES[busiestDay] : "")}
+              {filteredBusiestDay !== null ? DAY_NAMES[filteredBusiestDay] : busiestDay !== null ? DAY_NAMES[busiestDay] : ""}
             </span>
-            <p className="text-[10px] text-muted-foreground mt-1.5 leading-tight">
-              Highest traffic day ({timeRange})
-            </p>
+            <p className="text-[10px] text-muted-foreground mt-1.5 leading-tight">Highest traffic day ({timeRange})</p>
           </CardContent>
         </Card>
 
-        {/* Quietest Hour */}
         <Card className="bg-zinc-900/30 border-zinc-800">
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
-              <CardDescription className="flex items-center gap-2 text-xs">
-                <Moon className="w-3.5 h-3.5" />
-                Quietest Hour
-              </CardDescription>
+              <CardDescription className="flex items-center gap-2 text-xs"><Moon className="w-3.5 h-3.5" />Quietest Hour</CardDescription>
             </div>
             <CardTitle className="text-3xl font-bold tracking-tight">
-              {filteredQuietestHour !== null ? formatHourLabel(filteredQuietestHour) : (quietestHour !== null ? formatHourLabel(quietestHour) : "N/A")}
+              {filteredQuietestHour !== null ? formatHourLabel(filteredQuietestHour) : quietestHour !== null ? formatHourLabel(quietestHour) : "N/A"}
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-0">
-            <span className="text-[11px] text-blue-400">
-              Best for maintenance
-            </span>
-            <p className="text-[10px] text-muted-foreground mt-1.5 leading-tight">
-              Lowest traffic hour ({timeRange})
-            </p>
+            <span className="text-[11px] text-blue-400">Best for maintenance</span>
+            <p className="text-[10px] text-muted-foreground mt-1.5 leading-tight">Lowest traffic hour ({timeRange})</p>
           </CardContent>
         </Card>
       </div>
 
-      {/* Secondary Stats - 3 columns */}
+      {/* Secondary Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {/* This Month */}
         <Card className="bg-zinc-900/20 border-zinc-800/50">
           <CardHeader className="py-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-emerald-500/10">
-                  <Calendar className="w-4 h-4 text-emerald-500" />
-                </div>
-                <div>
-                  <CardDescription className="text-xs">This Month</CardDescription>
-                  <CardTitle className="text-2xl font-bold">{thisMonthCount}</CardTitle>
-                </div>
+                <div className="p-2 rounded-lg bg-emerald-500/10"><Calendar className="w-4 h-4 text-emerald-500" /></div>
+                <div><CardDescription className="text-xs">This Month</CardDescription><CardTitle className="text-2xl font-bold">{thisMonthCount}</CardTitle></div>
               </div>
               <TrendIndicator current={thisMonthCount} previous={lastMonthCount} suffix="vs last month" />
             </div>
           </CardHeader>
         </Card>
 
-        {/* Daily Average / Monthly Average */}
         <Card className="bg-zinc-900/20 border-zinc-800/50">
           <CardHeader className="py-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-blue-500/10">
-                  <Activity className="w-4 h-4 text-blue-500" />
-                </div>
+                <div className="p-2 rounded-lg bg-blue-500/10"><Activity className="w-4 h-4 text-blue-500" /></div>
                 <div>
-                  <CardDescription className="text-xs">
-                    {timeRange === "year" ? "Monthly Average" : "Daily Average"}
-                  </CardDescription>
+                  <CardDescription className="text-xs">{timeRange === "year" ? "Monthly Average" : "Daily Average"}</CardDescription>
                   <CardTitle className="text-2xl font-bold">{filteredAvgDaily}</CardTitle>
                 </div>
               </div>
@@ -889,18 +687,12 @@ export function AnalyticsDashboard() {
           </CardHeader>
         </Card>
 
-        {/* Today */}
         <Card className="bg-zinc-900/20 border-zinc-800/50">
           <CardHeader className="py-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-amber-500/10">
-                  <Clock className="w-4 h-4 text-amber-500" />
-                </div>
-                <div>
-                  <CardDescription className="text-xs">Today</CardDescription>
-                  <CardTitle className="text-2xl font-bold">{todayCount}</CardTitle>
-                </div>
+                <div className="p-2 rounded-lg bg-amber-500/10"><Clock className="w-4 h-4 text-amber-500" /></div>
+                <div><CardDescription className="text-xs">Today</CardDescription><CardTitle className="text-2xl font-bold">{todayCount}</CardTitle></div>
               </div>
               <TrendIndicator current={todayCount} previous={yesterdayCount} suffix="vs yesterday" />
             </div>
@@ -913,73 +705,37 @@ export function AnalyticsDashboard() {
         <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
             <CardTitle>Gym Activity</CardTitle>
-            <CardDescription>
-              {yearlyTotal} check-ins in {selectedYear}
-            </CardDescription>
+            <CardDescription>{yearlyTotal} check-ins in {selectedYear}</CardDescription>
           </div>
-          <select
-            value={selectedYear}
-            onChange={(e) => setSelectedYear(parseInt(e.target.value))}
-            className="border border-zinc-700 rounded px-3 py-1.5 bg-zinc-800 text-sm"
-          >
-            {yearOptions.map((year) => (
-              <option key={year} value={year}>
-                {year}
-              </option>
-            ))}
+          <select value={selectedYear} onChange={e => setSelectedYear(parseInt(e.target.value))}
+            className="border border-zinc-700 rounded px-3 py-1.5 bg-zinc-800 text-sm">
+            {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
           </select>
         </CardHeader>
-
         <CardContent>
           <div className="overflow-x-auto pb-2">
             <div className="flex ml-10 mb-2 min-w-fit">
               {monthLabels.map(({ label, weekIndex }, i) => (
-                <div
-                  key={i}
-                  className="text-xs text-muted-foreground"
-                  style={{
-                    position: "relative",
-                    left: `${weekIndex * 14}px`,
-                  }}
-                >
-                  {label}
-                </div>
+                <div key={i} className="text-xs text-muted-foreground" style={{ position: "relative", left: `${weekIndex * 14}px` }}>{label}</div>
               ))}
             </div>
-
             <div className="flex gap-1 min-w-fit">
               <div className="flex flex-col gap-[3px] mr-2 text-xs text-muted-foreground">
-                <div className="h-[10px]"></div>
-                <div className="h-[10px] leading-[10px]">Mon</div>
-                <div className="h-[10px]"></div>
-                <div className="h-[10px] leading-[10px]">Wed</div>
-                <div className="h-[10px]"></div>
-                <div className="h-[10px] leading-[10px]">Fri</div>
-                <div className="h-[10px]"></div>
+                <div className="h-[10px]" /><div className="h-[10px] leading-[10px]">Mon</div><div className="h-[10px]" />
+                <div className="h-[10px] leading-[10px]">Wed</div><div className="h-[10px]" /><div className="h-[10px] leading-[10px]">Fri</div><div className="h-[10px]" />
               </div>
-
               <div className="flex gap-[3px]">
-                {weeks.map((week, weekIndex) => (
-                  <div key={weekIndex} className="flex flex-col gap-[3px]">
-                    {week.map((day, dayIndex) => {
-                      const isOutsideYear = day.count === -1
-                      const isFuture = isAfter(day.date, new Date())
-
+                {weeks.map((week, wi) => (
+                  <div key={wi} className="flex flex-col gap-[3px]">
+                    {week.map((day, di) => {
+                      const outside = day.count === -1
+                      const future  = isAfter(day.date, new Date())
                       return (
-                        <div
-                          key={dayIndex}
-                          className={`w-[10px] h-[10px] rounded-sm transition-colors ${
-                            isOutsideYear || isFuture
-                              ? "bg-transparent"
-                              : getContributionColor(day.count, maxDayCount)
-                          }`}
-                          onMouseEnter={() => !isOutsideYear && !isFuture && setHoveredDay(day)}
+                        <div key={di}
+                          className={`w-[10px] h-[10px] rounded-sm transition-colors ${outside || future ? "bg-transparent" : getContributionColor(day.count, maxDayCount)}`}
+                          onMouseEnter={() => !outside && !future && setHoveredDay(day)}
                           onMouseLeave={() => setHoveredDay(null)}
-                          title={
-                            isOutsideYear || isFuture
-                              ? ""
-                              : `${format(day.date, "MMM d, yyyy")}: ${day.count} check-in${day.count !== 1 ? "s" : ""}`
-                          }
+                          title={outside || future ? "" : `${format(day.date, "MMM d, yyyy")}: ${day.count} check-in${day.count !== 1 ? "s" : ""}`}
                         />
                       )
                     })}
@@ -987,23 +743,17 @@ export function AnalyticsDashboard() {
                 ))}
               </div>
             </div>
-
             <div className="flex items-center gap-2 mt-4 text-xs text-muted-foreground">
               <span>Less</span>
-              <div className={`w-[10px] h-[10px] rounded-sm ${CONTRIBUTION_COLORS.empty}`} />
-              <div className={`w-[10px] h-[10px] rounded-sm ${CONTRIBUTION_COLORS.level1}`} />
-              <div className={`w-[10px] h-[10px] rounded-sm ${CONTRIBUTION_COLORS.level2}`} />
-              <div className={`w-[10px] h-[10px] rounded-sm ${CONTRIBUTION_COLORS.level3}`} />
-              <div className={`w-[10px] h-[10px] rounded-sm ${CONTRIBUTION_COLORS.level4}`} />
+              {[CONTRIBUTION_COLORS.empty, CONTRIBUTION_COLORS.level1, CONTRIBUTION_COLORS.level2, CONTRIBUTION_COLORS.level3, CONTRIBUTION_COLORS.level4].map((c, i) => (
+                <div key={i} className={`w-[10px] h-[10px] rounded-sm ${c}`} />
+              ))}
               <span>More</span>
             </div>
-
             {hoveredDay && (
               <div className="mt-2 text-sm">
                 <span className="font-medium">{format(hoveredDay.date, "EEEE, MMMM d, yyyy")}</span>
-                <span className="text-muted-foreground">
-                  {" "}— {hoveredDay.count} check-in{hoveredDay.count !== 1 ? "s" : ""}
-                </span>
+                <span className="text-muted-foreground"> — {hoveredDay.count} check-in{hoveredDay.count !== 1 ? "s" : ""}</span>
               </div>
             )}
           </div>
@@ -1017,115 +767,48 @@ export function AnalyticsDashboard() {
             <CardTitle>Active Sessions by Day and Time</CardTitle>
             <CardDescription>Each line represents a 2-hour pair.</CardDescription>
           </div>
-
           <div className="mt-4 md:mt-0 flex items-center gap-3 flex-wrap">
             <div className="flex items-center space-x-2">
-              <label htmlFor="monthPicker" className="text-sm text-muted-foreground whitespace-nowrap">
-                Month:
-              </label>
-              <select
-                id="monthPicker"
-                value={selectedMonth}
-                onChange={(e) => {
-                  setSelectedMonth(e.target.value)
-                  setSelectedWeek("all") // Reset week when month changes
-                }}
-                className="border border-zinc-700 rounded px-2 py-1 bg-zinc-800 text-sm"
-              >
-                {last12Months.map(({ key, label }) => (
-                  <option key={key} value={key}>
-                    {label}
-                  </option>
-                ))}
+              <label htmlFor="monthPicker" className="text-sm text-muted-foreground whitespace-nowrap">Month:</label>
+              <select id="monthPicker" value={selectedMonth}
+                onChange={e => { setSelectedMonth(e.target.value); setSelectedWeek("all") }}
+                className="border border-zinc-700 rounded px-2 py-1 bg-zinc-800 text-sm">
+                {last12Months.map(({ key, label }) => <option key={key} value={key}>{label}</option>)}
               </select>
             </div>
-
             <div className="flex items-center space-x-2">
-              <label htmlFor="weekPicker" className="text-sm text-muted-foreground whitespace-nowrap">
-                Week:
-              </label>
-              <select
-                id="weekPicker"
-                value={selectedWeek}
-                onChange={(e) => setSelectedWeek(e.target.value)}
-                className="border border-zinc-700 rounded px-2 py-1 bg-zinc-800 text-sm min-w-[180px]"
-              >
-                {availableWeeks.map(({ value, label }) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
+              <label htmlFor="weekPicker" className="text-sm text-muted-foreground whitespace-nowrap">Week:</label>
+              <select id="weekPicker" value={selectedWeek} onChange={e => setSelectedWeek(e.target.value)}
+                className="border border-zinc-700 rounded px-2 py-1 bg-zinc-800 text-sm min-w-[180px]">
+                {availableWeeks.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
               </select>
             </div>
           </div>
         </CardHeader>
-
         <CardContent className="h-[450px] flex flex-col md:flex-row">
           <ResponsiveContainer width="100%" height={400} minWidth={0} minHeight={0}>
             <LineChart data={lineData} margin={{ top: 30, right: 40, left: 20, bottom: 60 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-              <XAxis
-                dataKey="day"
-                label={{ value: "Day of Week", position: "bottom", offset: 20 }}
-                tick={{ fontSize: 12 }}
-                stroke="#71717a"
-              />
-              <YAxis
-                label={{
-                  value: "Active Users",
-                  angle: -90,
-                  position: "insideLeft",
-                  offset: 10,
-                }}
-                allowDecimals={false}
-                tick={{ fontSize: 12 }}
-                domain={[0, "dataMax"]}
-                stroke="#71717a"
-              />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: "#18181b",
-                  borderRadius: 8,
-                  border: "1px solid #27272a",
-                }}
-                formatter={(value: number, name: string) => [value, name]}
-                labelStyle={{ fontWeight: 600 }}
-              />
-
+              <XAxis dataKey="day" label={{ value: "Day of Week", position: "bottom", offset: 20 }} tick={{ fontSize: 12 }} stroke="#71717a" />
+              <YAxis label={{ value: "Active Users", angle: -90, position: "insideLeft", offset: 10 }} allowDecimals={false} tick={{ fontSize: 12 }} domain={[0, "dataMax"]} stroke="#71717a" />
+              <Tooltip contentStyle={{ backgroundColor: "#18181b", borderRadius: 8, border: "1px solid #27272a" }}
+                formatter={(value: number, name: string) => [value, name]} labelStyle={{ fontWeight: 600 }} />
               {TIME_PAIRS.map(({ label }, index) => (
-                <Line
-                  key={label}
-                  type="monotone"
-                  dataKey={label}
-                  stroke={colors[index % colors.length]}
-                  strokeWidth={2}
-                  dot={false}
-                  name={label}
-                  activeDot={{ r: 5 }}
-                />
+                <Line key={label} type="monotone" dataKey={label} stroke={colors[index % colors.length]}
+                  strokeWidth={2} dot={false} name={label} activeDot={{ r: 5 }} />
               ))}
             </LineChart>
           </ResponsiveContainer>
-
           <div className="w-full md:w-[15%] mt-4 md:mt-0 md:ml-4 flex flex-col">
-            <button
-              className="mb-2 px-4 py-2 bg-indigo-600 text-white text-sm rounded hover:bg-indigo-700 transition"
-              onClick={() => setLegendOpen((prev) => !prev)}
-            >
+            <button className="mb-2 px-4 py-2 bg-indigo-600 text-white text-sm rounded hover:bg-indigo-700 transition"
+              onClick={() => setLegendOpen(prev => !prev)}>
               {legendOpen ? "Hide Legend" : "Show Legend"}
             </button>
-
             {legendOpen && (
-              <div
-                className="overflow-y-auto border border-zinc-700 rounded p-2 max-h-[350px]"
-                style={{ scrollbarWidth: "thin" }}
-              >
+              <div className="overflow-y-auto border border-zinc-700 rounded p-2 max-h-[350px]" style={{ scrollbarWidth: "thin" }}>
                 {TIME_PAIRS.map(({ label }, index) => (
                   <div key={label} className="flex items-center mb-2">
-                    <div
-                      className="w-4 h-4 rounded mr-2 flex-shrink-0"
-                      style={{ backgroundColor: colors[index % colors.length] }}
-                    />
+                    <div className="w-4 h-4 rounded mr-2 flex-shrink-0" style={{ backgroundColor: colors[index % colors.length] }} />
                     <span className="text-xs">{label}</span>
                   </div>
                 ))}
@@ -1147,21 +830,9 @@ export function AnalyticsDashboard() {
               <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
               <XAxis dataKey="month" stroke="#71717a" tick={{ fontSize: 12 }} />
               <YAxis stroke="#71717a" tick={{ fontSize: 12 }} />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: "#18181b",
-                  borderRadius: 8,
-                  border: "1px solid #27272a",
-                }}
-              />
-              <Line
-                type="monotone"
-                dataKey="checkIns"
-                stroke="#10b981"
-                strokeWidth={2}
-                dot={{ fill: "#10b981", r: 3 }}
-                activeDot={{ r: 5 }}
-              />
+              <Tooltip contentStyle={{ backgroundColor: "#18181b", borderRadius: 8, border: "1px solid #27272a" }} />
+              <Line type="monotone" dataKey="checkIns" stroke="#10b981" strokeWidth={2}
+                dot={{ fill: "#10b981", r: 3 }} activeDot={{ r: 5 }} />
             </LineChart>
           </ResponsiveContainer>
         </CardContent>

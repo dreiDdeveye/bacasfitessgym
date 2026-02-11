@@ -467,14 +467,28 @@ export async function addLiabilityWaiver(
 //
 
 export async function getScanLogs(): Promise<ScanLog[]> {
-  const { data, error } = await supabase
-    .from("scan_logs")
-    .select("*")
-    .order("timestamp", { ascending: false })
+  // Fetches ALL logs with no cap using pagination (Supabase default limit is 1000)
+  let allLogs: any[] = []
+  let from = 0
+  const batchSize = 1000
 
-  if (error) return []
+  while (true) {
+    const { data, error } = await supabase
+      .from("scan_logs")
+      .select("*")
+      .order("timestamp", { ascending: false })
+      .range(from, from + batchSize - 1)
 
-  return (data || []).map((log) => ({
+    if (error || !data || data.length === 0) break
+
+    allLogs = allLogs.concat(data)
+
+    if (data.length < batchSize) break // last page reached
+
+    from += batchSize
+  }
+
+  return allLogs.map((log) => ({
     id: log.id,
     userId: log.user_id,
     userName: log.user_name,
@@ -504,15 +518,12 @@ export async function addScanLog(log: ScanLog): Promise<void> {
 }
 
 export async function getTodayScanLogs(): Promise<ScanLog[]> {
-  // Get current date in Philippine timezone
   const nowPH = new Date().toLocaleString("en-US", { timeZone: "Asia/Manila" })
   const todayPH = new Date(nowPH)
-  
-  // Get start of day (00:00:00) in PH timezone
+
   const startOfDayPH = new Date(todayPH)
   startOfDayPH.setHours(0, 0, 0, 0)
-  
-  // Get end of day (23:59:59) in PH timezone
+
   const endOfDayPH = new Date(todayPH)
   endOfDayPH.setHours(23, 59, 59, 999)
 
