@@ -533,25 +533,25 @@ export function ScanLogs() {
       </Card>
 
       {/* Results Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h2 className="text-xl font-semibold">Scan History</h2>
-          <p className="text-sm text-muted-foreground">{getFilterDescription()}</p>
+      <div className="flex items-center justify-between flex-wrap gap-2 md:gap-3">
+        <div className="min-w-0">
+          <h2 className="text-lg md:text-xl font-semibold">Scan History</h2>
+          <p className="text-xs md:text-sm text-muted-foreground truncate">{getFilterDescription()}</p>
         </div>
-        <div className="flex items-center gap-3">
-          <Badge variant="outline" className="text-sm">
+        <div className="flex items-center gap-2 md:gap-3 shrink-0">
+          <Badge variant="outline" className="text-xs md:text-sm">
             {filteredLogs.length} {filteredLogs.length === 1 ? "record" : "records"}
           </Badge>
           <Button variant="outline" size="sm" className="flex items-center gap-2" onClick={() => setShowDownloadDialog(true)}>
             <Download className="w-4 h-4" />
-            Download
+            <span className="hidden sm:inline">Download</span>
           </Button>
         </div>
       </div>
 
       {/* ═══════════ DOWNLOAD DIALOG ═══════════ */}
       <Dialog open={showDownloadDialog} onOpenChange={setShowDownloadDialog}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto w-[95vw] md:w-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Download className="w-5 h-5" />
@@ -663,23 +663,23 @@ export function ScanLogs() {
       ) : (
         <div className="space-y-2">
           {filteredLogs.map(log => (
-            <Card key={log.id} className="p-4">
-              <div className="flex items-center gap-4">
-                <div className={`p-2 rounded-lg ${log.action === "check-in" ? "bg-primary/10" : log.action === "check-out" ? "bg-accent/10" : "bg-destructive/10"}`}>
+            <Card key={log.id} className="p-3 md:p-4">
+              <div className="flex items-center gap-2 md:gap-4">
+                <div className={`p-1.5 md:p-2 rounded-lg shrink-0 ${log.action === "check-in" ? "bg-primary/10" : log.action === "check-out" ? "bg-accent/10" : "bg-destructive/10"}`}>
                   {getActionIcon(log.action)}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-semibold truncate">{log.userName}</span>
+                  <div className="flex items-center gap-1.5 md:gap-2 flex-wrap">
+                    <span className="font-semibold truncate text-sm md:text-base">{log.userName}</span>
                     {getStatusBadge(log)}
                   </div>
-                  <div className="flex items-center gap-4 mt-1 text-sm text-muted-foreground">
-                    <span className="font-mono">{log.userId}</span>
-                    <span>{formatTimestamp(log.timestamp)}</span>
+                  <div className="flex items-center gap-2 md:gap-4 mt-1 text-xs md:text-sm text-muted-foreground">
+                    <span className="font-mono truncate max-w-[100px] sm:max-w-none">{log.userId}</span>
+                    <span className="shrink-0">{formatTimestamp(log.timestamp)}</span>
                   </div>
                 </div>
-                <Badge variant={log.action === "check-in" ? "default" : log.action === "check-out" ? "secondary" : "destructive"}>
-                  {log.action === "check-in" ? "Check In" : log.action === "check-out" ? "Check Out" : "Not Applicable"}
+                <Badge className="shrink-0 text-[10px] md:text-xs" variant={log.action === "check-in" ? "default" : log.action === "check-out" ? "secondary" : "destructive"}>
+                  {log.action === "check-in" ? "In" : log.action === "check-out" ? "Out" : "N/A"}
                 </Badge>
               </div>
             </Card>

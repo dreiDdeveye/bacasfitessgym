@@ -323,81 +323,81 @@ export function ScannerInterface() {
         <span>{isOnline ? "Live" : "Offline"} • Updated {formatLastUpdate(lastUpdate)}</span>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card className="p-6">
-          <p className="text-sm text-muted-foreground">Active Now</p>
-          <p className="text-2xl font-bold">{activeSessions}</p>
+      <div className="grid grid-cols-3 gap-2 md:gap-4">
+        <Card className="p-3 md:p-6">
+          <p className="text-xs md:text-sm text-muted-foreground">Active Now</p>
+          <p className="text-xl md:text-2xl font-bold">{activeSessions}</p>
         </Card>
-        <Card className="p-6">
-          <p className="text-sm text-muted-foreground">Today's Check-ins</p>
-          <p className="text-2xl font-bold">{todayCheckIns}</p>
+        <Card className="p-3 md:p-6">
+          <p className="text-xs md:text-sm text-muted-foreground">Today's Check-ins</p>
+          <p className="text-xl md:text-2xl font-bold">{todayCheckIns}</p>
         </Card>
-        <Card className="p-6 cursor-pointer hover:bg-zinc-800/50 transition-colors group" onClick={() => handleMembersCardClick("all")}>
+        <Card className="p-3 md:p-6 cursor-pointer hover:bg-zinc-800/50 transition-colors group" onClick={() => handleMembersCardClick("all")}>
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Users className="w-5 h-5 text-muted-foreground" />
+            <div className="flex items-center gap-2 md:gap-3">
+              <Users className="w-4 h-4 md:w-5 md:h-5 text-muted-foreground hidden sm:block" />
               <div>
-                <p className="text-sm text-muted-foreground">Total Members</p>
-                <p className="text-2xl font-bold">{totalMembers}</p>
+                <p className="text-xs md:text-sm text-muted-foreground">Total Members</p>
+                <p className="text-xl md:text-2xl font-bold">{totalMembers}</p>
               </div>
             </div>
-            <ChevronRight className="w-5 h-5 text-muted-foreground group-hover:text-foreground transition-colors" />
+            <ChevronRight className="w-4 h-4 md:w-5 md:h-5 text-muted-foreground group-hover:text-foreground transition-colors" />
           </div>
         </Card>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card className="p-6 cursor-pointer hover:bg-zinc-800/50 transition-colors group border-l-4 border-l-primary" onClick={() => handleMembersCardClick("monthly")}>
+      <div className="grid grid-cols-3 gap-2 md:gap-4">
+        <Card className="p-3 md:p-6 cursor-pointer hover:bg-zinc-800/50 transition-colors group border-l-4 border-l-primary" onClick={() => handleMembersCardClick("monthly")}>
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <CalendarDays className="w-5 h-5 text-primary" />
+            <div className="flex items-center gap-2 md:gap-3">
+              <CalendarDays className="w-4 h-4 md:w-5 md:h-5 text-primary hidden sm:block" />
               <div>
-                <p className="text-sm text-muted-foreground">Monthly Subs</p>
-                <p className="text-2xl font-bold">{monthlyCount}</p>
-                <p className="text-xs text-muted-foreground">1m, 6m, 1 year plans</p>
+                <p className="text-xs md:text-sm text-muted-foreground">Monthly</p>
+                <p className="text-xl md:text-2xl font-bold">{monthlyCount}</p>
+                <p className="text-[10px] md:text-xs text-muted-foreground hidden sm:block">1m, 6m, 1 year plans</p>
               </div>
             </div>
-            <ChevronRight className="w-5 h-5 text-muted-foreground group-hover:text-foreground transition-colors" />
+            <ChevronRight className="w-4 h-4 md:w-5 md:h-5 text-muted-foreground group-hover:text-foreground transition-colors hidden sm:block" />
           </div>
         </Card>
-        <Card className="p-6 cursor-pointer hover:bg-zinc-800/50 transition-colors group border-l-4 border-l-purple-600" onClick={() => handleMembersCardClick("daily")}>
+        <Card className="p-3 md:p-6 cursor-pointer hover:bg-zinc-800/50 transition-colors group border-l-4 border-l-purple-600" onClick={() => handleMembersCardClick("daily")}>
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Calendar className="w-5 h-5 text-purple-600" />
+            <div className="flex items-center gap-2 md:gap-3">
+              <Calendar className="w-4 h-4 md:w-5 md:h-5 text-purple-600 hidden sm:block" />
               <div>
-                <p className="text-sm text-muted-foreground">Daily Pass</p>
-                <p className="text-2xl font-bold">{dailyCount}</p>
-                <p className="text-xs text-muted-foreground">Expires at midnight</p>
+                <p className="text-xs md:text-sm text-muted-foreground">Daily</p>
+                <p className="text-xl md:text-2xl font-bold">{dailyCount}</p>
+                <p className="text-[10px] md:text-xs text-muted-foreground hidden sm:block">Expires at midnight</p>
               </div>
             </div>
-            <ChevronRight className="w-5 h-5 text-muted-foreground group-hover:text-foreground transition-colors" />
+            <ChevronRight className="w-4 h-4 md:w-5 md:h-5 text-muted-foreground group-hover:text-foreground transition-colors hidden sm:block" />
           </div>
         </Card>
-        <Card className="p-6 cursor-pointer hover:bg-zinc-800/50 transition-colors group border-l-4 border-l-blue-600" onClick={() => handleMembersCardClick("walkin")}>
+        <Card className="p-3 md:p-6 cursor-pointer hover:bg-zinc-800/50 transition-colors group border-l-4 border-l-blue-600" onClick={() => handleMembersCardClick("walkin")}>
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <CalendarClock className="w-5 h-5 text-blue-600" />
+            <div className="flex items-center gap-2 md:gap-3">
+              <CalendarClock className="w-4 h-4 md:w-5 md:h-5 text-blue-600 hidden sm:block" />
               <div>
-                <p className="text-sm text-muted-foreground">Walk-in</p>
-                <p className="text-2xl font-bold">{walkinCount}</p>
-                <p className="text-xs text-muted-foreground">Custom date range</p>
+                <p className="text-xs md:text-sm text-muted-foreground">Walk-in</p>
+                <p className="text-xl md:text-2xl font-bold">{walkinCount}</p>
+                <p className="text-[10px] md:text-xs text-muted-foreground hidden sm:block">Custom date range</p>
               </div>
             </div>
-            <ChevronRight className="w-5 h-5 text-muted-foreground group-hover:text-foreground transition-colors" />
+            <ChevronRight className="w-4 h-4 md:w-5 md:h-5 text-muted-foreground group-hover:text-foreground transition-colors hidden sm:block" />
           </div>
         </Card>
       </div>
 
-      <Card className="p-10 flex flex-col items-center justify-center min-h-[350px]">
-        <div className={`p-10 rounded-full ${isScanning ? "bg-primary/20 animate-pulse" : "bg-muted"}`}>
-          <ScanLine className="w-20 h-20 text-primary" />
+      <Card className="p-6 md:p-10 flex flex-col items-center justify-center min-h-[250px] md:min-h-[350px]">
+        <div className={`p-6 md:p-10 rounded-full ${isScanning ? "bg-primary/20 animate-pulse" : "bg-muted"}`}>
+          <ScanLine className="w-12 h-12 md:w-20 md:h-20 text-primary" />
         </div>
-        <h2 className="text-3xl font-bold mt-6">{isScanning ? "Scanning..." : "Ready to Scan"}</h2>
-        <p className="text-muted-foreground mt-2">Present QR Code to Scanner</p>
+        <h2 className="text-2xl md:text-3xl font-bold mt-4 md:mt-6">{isScanning ? "Scanning..." : "Ready to Scan"}</h2>
+        <p className="text-muted-foreground mt-2 text-sm md:text-base">Present QR Code to Scanner</p>
       </Card>
 
       <Dialog open={showMembersDialog} onOpenChange={setShowMembersDialog}>
-        <DialogContent className="max-w-4xl max-h-[85vh] overflow-hidden flex flex-col">
+        <DialogContent className="max-w-4xl max-h-[85vh] overflow-hidden flex flex-col w-[95vw] md:w-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Users className="w-5 h-5" />
@@ -481,7 +481,7 @@ export function ScannerInterface() {
                       </div>
                     </div>
                   </div>
-                  <div className="flex gap-4 mt-3 pt-3 border-t text-xs">
+                  <div className="flex gap-2 md:gap-4 mt-3 pt-3 border-t text-[10px] md:text-xs">
                     {(["today", "week", "month", "year", "all"] as HoursView[]).map(v => (
                       <div key={v} className="flex-1 text-center">
                         <p className="text-muted-foreground capitalize">{v === "all" ? "All" : v.charAt(0).toUpperCase() + v.slice(1)}</p>
@@ -498,17 +498,17 @@ export function ScannerInterface() {
 
       {/* DUPLICATE SCAN POPUP */}
       {duplicateScan && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm">
-          <Card className="w-full max-w-xl p-8 bg-white rounded-xl shadow-2xl border border-yellow-400">
-            <div className="flex items-start gap-4">
-              <div className="p-3 rounded-full bg-yellow-100">
-                <ShieldAlert className="w-8 h-8 text-yellow-600" />
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm p-4">
+          <Card className="w-full max-w-xl p-5 md:p-8 bg-white rounded-xl shadow-2xl border border-yellow-400">
+            <div className="flex items-start gap-3 md:gap-4">
+              <div className="p-2 md:p-3 rounded-full bg-yellow-100 shrink-0">
+                <ShieldAlert className="w-6 h-6 md:w-8 md:h-8 text-yellow-600" />
               </div>
-              <div>
-                <h2 className="text-2xl font-bold text-yellow-700">Already Scanned</h2>
-                <p className="text-lg font-semibold mt-1">{duplicateScan.userName}</p>
-                <p className="text-sm text-gray-500 mt-1">ID: {duplicateScan.userId}</p>
-                <p className="text-sm text-gray-600 mt-3">
+              <div className="min-w-0">
+                <h2 className="text-xl md:text-2xl font-bold text-yellow-700">Already Scanned</h2>
+                <p className="text-base md:text-lg font-semibold mt-1 truncate">{duplicateScan.userName}</p>
+                <p className="text-xs md:text-sm text-gray-500 mt-1 truncate">ID: {duplicateScan.userId}</p>
+                <p className="text-xs md:text-sm text-gray-600 mt-3">
                   This QR code was just scanned. Please wait{" "}
                   <span className="font-bold text-yellow-700">{duplicateScan.cooldownLeft}s</span>{" "}
                   before scanning again.
@@ -521,21 +521,21 @@ export function ScannerInterface() {
 
       {/* SCAN RESULT POPUP */}
       {lastScan && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm">
-          <Card className="w-full max-w-xl p-8 bg-white rounded-xl shadow-2xl border">
-            <div className="flex gap-6">
-              <div className="flex-1">
-                <h2 className={`text-3xl font-bold ${lastScan.success ? "text-gold-600" : "text-black-600"}`}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm p-4">
+          <Card className="w-full max-w-xl p-5 md:p-8 bg-white rounded-xl shadow-2xl border">
+            <div className="flex gap-4 md:gap-6">
+              <div className="flex-1 min-w-0">
+                <h2 className={`text-2xl md:text-3xl font-bold ${lastScan.success ? "text-gold-600" : "text-black-600"}`}>
                   {lastScan.message}
                 </h2>
-                <p className="text-lg font-bold mt-1">
+                <p className="text-base md:text-lg font-bold mt-1 truncate">
                   {lastScan.user?.name || lastScan.log?.userName || "Unknown User"}
                 </p>
-                <p className="text-sm text-white-600">ID: {lastScan.log?.userId}</p>
+                <p className="text-xs md:text-sm text-white-600 truncate">ID: {lastScan.log?.userId}</p>
                 <div className="mt-2">
                   {lastScan.subscription && getMembershipBadge(getMembershipType(lastScan.subscription))}
                 </div>
-                <div className="mt-4">
+                <div className="mt-3 md:mt-4">
                   {(() => {
                     const status = getExpiryStatus(lastScan.subscription)
                     const days   = getRemainingDays(lastScan.subscription)

@@ -122,5 +122,20 @@
   }
   body {
     @apply bg-background text-foreground;
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+/* Mobile-friendly dialog sizing */
+@media (max-width: 640px) {
+  [data-slot="dialog-content"] {
+    max-width: 95vw !important;
+    padding: 1rem !important;
+  }
+
+  /* Prevent horizontal overflow on mobile */
+  .recharts-wrapper {
+    max-width: 100% !important;
   }
 }

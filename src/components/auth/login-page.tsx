@@ -48,13 +48,13 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
         alt="BaCasFitness Logo"
         width={500}
         height={500}
-        className="object-contain max-w-full h-auto -mb-28"
+        className="object-contain max-w-[280px] sm:max-w-[400px] md:max-w-full h-auto -mb-16 sm:-mb-20 md:-mb-28"
         priority
       />
 
       {/* LOGIN CARD */}
 <Card className="w-full max-w-md bg-black/90 shadow-lg rounded-lg">
-  <CardContent className="pt-5 px-8">
+  <CardContent className="pt-5 px-4 sm:px-8">
     <form onSubmit={handleSubmit} className="space-y-6">
       {error && (
         <Alert className="bg-red-500/20 border-red-500/40">

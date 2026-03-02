@@ -63,27 +63,27 @@ export function ActiveSessions({ onUpdate }: ActiveSessionsProps) {
   return (
     <div className="grid gap-4">
       {sessions.map((session) => (
-        <Card key={session.userId} className="p-4">
-          <div className="flex items-center justify-between">
-            <div className="flex-1">
-              <div className="flex items-center gap-3">
-                <h3 className="font-semibold text-lg">{session.userName}</h3>
+        <Card key={session.userId} className="p-3 md:p-4">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 md:gap-3 flex-wrap">
+                <h3 className="font-semibold text-base md:text-lg truncate">{session.userName}</h3>
                 <Badge variant="default">Active</Badge>
               </div>
 
-              <div className="mt-2 space-y-1 text-sm text-muted-foreground">
-                <p className="font-mono text-primary">{session.userId}</p>
+              <div className="mt-2 space-y-1 text-xs md:text-sm text-muted-foreground">
+                <p className="font-mono text-primary truncate">{session.userId}</p>
                 <div className="flex items-center gap-2">
-                  <Clock className="w-3 h-3" />
+                  <Clock className="w-3 h-3 shrink-0" />
                   <span>Duration: {formatDuration(session.checkInTime)}</span>
                 </div>
-                <p className="text-xs">Checked in at {new Date(session.checkInTime).toLocaleTimeString()}</p>
+                <p className="text-[10px] md:text-xs">Checked in at {new Date(session.checkInTime).toLocaleTimeString()}</p>
               </div>
             </div>
 
-            <Button variant="outline" onClick={() => handleCheckOut(session.userId)}>
-              <LogOut className="w-4 h-4 mr-2" />
-              Check Out
+            <Button variant="outline" size="sm" className="shrink-0" onClick={() => handleCheckOut(session.userId)}>
+              <LogOut className="w-4 h-4 md:mr-2" />
+              <span className="hidden md:inline">Check Out</span>
             </Button>
           </div>
         </Card>

@@ -572,12 +572,12 @@ export function AnalyticsDashboard() {
   return (
     <div className="space-y-6">
       {/* Time Range Selector */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <span className="text-sm text-muted-foreground">View:</span>
-        <div className="flex gap-1 bg-zinc-800/50 rounded-lg p-1">
+      <div className="flex items-center gap-2 md:gap-3 flex-wrap">
+        <span className="text-xs md:text-sm text-muted-foreground">View:</span>
+        <div className="flex gap-0.5 md:gap-1 bg-zinc-800/50 rounded-lg p-1 overflow-x-auto">
           {(["today", "week", "month", "year", "all"] as TimeRange[]).map((range) => (
             <button key={range} onClick={() => setTimeRange(range)}
-              className={`px-3 py-1.5 text-sm rounded-md transition-all ${timeRange === range ? "bg-emerald-600 text-white shadow-sm" : "text-muted-foreground hover:text-foreground hover:bg-zinc-700/50"}`}>
+              className={`px-2 md:px-3 py-1 md:py-1.5 text-xs md:text-sm rounded-md transition-all whitespace-nowrap ${timeRange === range ? "bg-emerald-600 text-white shadow-sm" : "text-muted-foreground hover:text-foreground hover:bg-zinc-700/50"}`}>
               {range.charAt(0).toUpperCase() + range.slice(1)}
             </button>
           ))}
@@ -585,85 +585,87 @@ export function AnalyticsDashboard() {
       </div>
 
       {/* Primary Stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 md:gap-4">
         <Card className="bg-zinc-900/30 border-zinc-800">
-          <CardHeader className="pb-2">
+          <CardHeader className="pb-2 p-3 md:p-6 md:pb-2">
             <div className="flex items-center justify-between">
-              <CardDescription className="flex items-center gap-2 text-xs"><Users className="w-3.5 h-3.5" />Check-ins</CardDescription>
-              <Sparkline data={last7DaysData} />
+              <CardDescription className="flex items-center gap-1.5 text-[10px] md:text-xs"><Users className="w-3 h-3 md:w-3.5 md:h-3.5" />Check-ins</CardDescription>
+              <span className="hidden sm:block"><Sparkline data={last7DaysData} /></span>
             </div>
-            <CardTitle className="text-3xl font-bold tracking-tight">{getDisplayCount()}</CardTitle>
+            <CardTitle className="text-2xl md:text-3xl font-bold tracking-tight">{getDisplayCount()}</CardTitle>
           </CardHeader>
-          <CardContent className="pt-0">
+          <CardContent className="pt-0 px-3 md:px-6 pb-3 md:pb-6">
             {timeRange !== "year" && timeRange !== "all" && (
               <TrendIndicator current={getDisplayCount()} previous={getPreviousCount()} suffix={getComparisonLabel()} />
             )}
-            <p className="text-[10px] text-muted-foreground mt-1.5 leading-tight">
+            <p className="text-[9px] md:text-[10px] text-muted-foreground mt-1 md:mt-1.5 leading-tight">
               All recorded entries for {timeRange === "all" ? "all time" : `this ${timeRange}`}
             </p>
           </CardContent>
         </Card>
 
         <Card className="bg-zinc-900/30 border-zinc-800">
-          <CardHeader className="pb-2">
+          <CardHeader className="pb-2 p-3 md:p-6 md:pb-2">
             <div className="flex items-center justify-between">
-              <CardDescription className="flex items-center gap-2 text-xs"><Clock className="w-3.5 h-3.5" />Peak Hour</CardDescription>
-              <Sparkline data={filteredHourlyDistribution.length ? filteredHourlyDistribution : hourlyDistribution} color="#f59e0b" />
+              <CardDescription className="flex items-center gap-1.5 text-[10px] md:text-xs"><Clock className="w-3 h-3 md:w-3.5 md:h-3.5" />Peak Hour</CardDescription>
+              <span className="hidden sm:block"><Sparkline data={filteredHourlyDistribution.length ? filteredHourlyDistribution : hourlyDistribution} color="#f59e0b" /></span>
             </div>
-            <CardTitle className="text-3xl font-bold tracking-tight">
+            <CardTitle className="text-2xl md:text-3xl font-bold tracking-tight">
               {filteredPeakHour !== null ? formatHourLabel(filteredPeakHour) : peakHour !== null ? formatHourLabel(peakHour) : "N/A"}
             </CardTitle>
           </CardHeader>
-          <CardContent className="pt-0">
+          <CardContent className="pt-0 px-3 md:px-6 pb-3 md:pb-6">
+            <span className="hidden md:flex text-[11px] text-muted-foreground items-center gap-1">
             {previousPeakHour !== null && filteredPeakHour !== null && filteredPeakHour !== previousPeakHour
-              ? <span className="text-[11px] text-amber-500 flex items-center gap-1"><Activity className="w-3 h-3" />Different from last month ({formatHourLabel(previousPeakHour)})</span>
-              : <span className="text-[11px] text-muted-foreground flex items-center gap-1"><Minus className="w-3 h-3" /> Consistent</span>}
-            <p className="text-[10px] text-muted-foreground mt-1.5 leading-tight">Most active check-in time ({timeRange})</p>
+              ? <><Activity className="w-3 h-3 text-amber-500" />Different from last month</>
+              : <><Minus className="w-3 h-3" /> Consistent</>}
+            </span>
+            <p className="text-[9px] md:text-[10px] text-muted-foreground mt-1 md:mt-1.5 leading-tight">Most active time ({timeRange})</p>
           </CardContent>
         </Card>
 
         <Card className="bg-zinc-900/30 border-zinc-800">
-          <CardHeader className="pb-2">
+          <CardHeader className="pb-2 p-3 md:p-6 md:pb-2">
             <div className="flex items-center justify-between">
-              <CardDescription className="flex items-center gap-2 text-xs"><Calendar className="w-3.5 h-3.5" />Busiest Day</CardDescription>
-              <MiniBarChart data={filteredWeeklyBreakdown.length ? filteredWeeklyBreakdown : weeklyBreakdown} />
+              <CardDescription className="flex items-center gap-1.5 text-[10px] md:text-xs"><Calendar className="w-3 h-3 md:w-3.5 md:h-3.5" />Busiest Day</CardDescription>
+              <span className="hidden sm:block"><MiniBarChart data={filteredWeeklyBreakdown.length ? filteredWeeklyBreakdown : weeklyBreakdown} /></span>
             </div>
-            <CardTitle className="text-3xl font-bold tracking-tight">
+            <CardTitle className="text-2xl md:text-3xl font-bold tracking-tight">
               {filteredBusiestDay !== null ? DAY_SHORT[filteredBusiestDay] : busiestDay !== null ? DAY_SHORT[busiestDay] : "N/A"}
             </CardTitle>
           </CardHeader>
-          <CardContent className="pt-0">
+          <CardContent className="pt-0 px-3 md:px-6 pb-3 md:pb-6">
             <span className="text-[11px] text-emerald-500">
               {filteredBusiestDay !== null ? DAY_NAMES[filteredBusiestDay] : busiestDay !== null ? DAY_NAMES[busiestDay] : ""}
             </span>
-            <p className="text-[10px] text-muted-foreground mt-1.5 leading-tight">Highest traffic day ({timeRange})</p>
+            <p className="text-[9px] md:text-[10px] text-muted-foreground mt-1 md:mt-1.5 leading-tight">Highest traffic day ({timeRange})</p>
           </CardContent>
         </Card>
 
         <Card className="bg-zinc-900/30 border-zinc-800">
-          <CardHeader className="pb-2">
+          <CardHeader className="pb-2 p-3 md:p-6 md:pb-2">
             <div className="flex items-center justify-between">
-              <CardDescription className="flex items-center gap-2 text-xs"><Moon className="w-3.5 h-3.5" />Quietest Hour</CardDescription>
+              <CardDescription className="flex items-center gap-1.5 text-[10px] md:text-xs"><Moon className="w-3 h-3 md:w-3.5 md:h-3.5" />Quietest Hour</CardDescription>
             </div>
-            <CardTitle className="text-3xl font-bold tracking-tight">
+            <CardTitle className="text-2xl md:text-3xl font-bold tracking-tight">
               {filteredQuietestHour !== null ? formatHourLabel(filteredQuietestHour) : quietestHour !== null ? formatHourLabel(quietestHour) : "N/A"}
             </CardTitle>
           </CardHeader>
-          <CardContent className="pt-0">
+          <CardContent className="pt-0 px-3 md:px-6 pb-3 md:pb-6">
             <span className="text-[11px] text-blue-400">Best for maintenance</span>
-            <p className="text-[10px] text-muted-foreground mt-1.5 leading-tight">Lowest traffic hour ({timeRange})</p>
+            <p className="text-[9px] md:text-[10px] text-muted-foreground mt-1 md:mt-1.5 leading-tight">Lowest traffic hour ({timeRange})</p>
           </CardContent>
         </Card>
       </div>
 
       {/* Secondary Stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 md:gap-4">
         <Card className="bg-zinc-900/20 border-zinc-800/50">
-          <CardHeader className="py-3">
+          <CardHeader className="py-3 px-3 md:px-6">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-emerald-500/10"><Calendar className="w-4 h-4 text-emerald-500" /></div>
-                <div><CardDescription className="text-xs">This Month</CardDescription><CardTitle className="text-2xl font-bold">{thisMonthCount}</CardTitle></div>
+              <div className="flex items-center gap-2 md:gap-3">
+                <div className="p-1.5 md:p-2 rounded-lg bg-emerald-500/10"><Calendar className="w-3.5 h-3.5 md:w-4 md:h-4 text-emerald-500" /></div>
+                <div><CardDescription className="text-[10px] md:text-xs">This Month</CardDescription><CardTitle className="text-xl md:text-2xl font-bold">{thisMonthCount}</CardTitle></div>
               </div>
               <TrendIndicator current={thisMonthCount} previous={lastMonthCount} suffix="vs last month" />
             </div>
@@ -671,28 +673,28 @@ export function AnalyticsDashboard() {
         </Card>
 
         <Card className="bg-zinc-900/20 border-zinc-800/50">
-          <CardHeader className="py-3">
+          <CardHeader className="py-3 px-3 md:px-6">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-blue-500/10"><Activity className="w-4 h-4 text-blue-500" /></div>
+              <div className="flex items-center gap-2 md:gap-3">
+                <div className="p-1.5 md:p-2 rounded-lg bg-blue-500/10"><Activity className="w-3.5 h-3.5 md:w-4 md:h-4 text-blue-500" /></div>
                 <div>
-                  <CardDescription className="text-xs">{timeRange === "year" ? "Monthly Average" : "Daily Average"}</CardDescription>
-                  <CardTitle className="text-2xl font-bold">{filteredAvgDaily}</CardTitle>
+                  <CardDescription className="text-[10px] md:text-xs">{timeRange === "year" ? "Monthly Avg" : "Daily Avg"}</CardDescription>
+                  <CardTitle className="text-xl md:text-2xl font-bold">{filteredAvgDaily}</CardTitle>
                 </div>
               </div>
-              <span className="text-[11px] text-muted-foreground px-2 py-1 bg-zinc-800 rounded">
-                {timeRange === "all" ? "Per year (365 days)" : timeRange === "year" ? "This year" : `This ${timeRange}`}
+              <span className="text-[10px] md:text-[11px] text-muted-foreground px-1.5 md:px-2 py-0.5 md:py-1 bg-zinc-800 rounded hidden sm:inline">
+                {timeRange === "all" ? "Per year" : timeRange === "year" ? "This year" : `This ${timeRange}`}
               </span>
             </div>
           </CardHeader>
         </Card>
 
         <Card className="bg-zinc-900/20 border-zinc-800/50">
-          <CardHeader className="py-3">
+          <CardHeader className="py-3 px-3 md:px-6">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-amber-500/10"><Clock className="w-4 h-4 text-amber-500" /></div>
-                <div><CardDescription className="text-xs">Today</CardDescription><CardTitle className="text-2xl font-bold">{todayCount}</CardTitle></div>
+              <div className="flex items-center gap-2 md:gap-3">
+                <div className="p-1.5 md:p-2 rounded-lg bg-amber-500/10"><Clock className="w-3.5 h-3.5 md:w-4 md:h-4 text-amber-500" /></div>
+                <div><CardDescription className="text-[10px] md:text-xs">Today</CardDescription><CardTitle className="text-xl md:text-2xl font-bold">{todayCount}</CardTitle></div>
               </div>
               <TrendIndicator current={todayCount} previous={yesterdayCount} suffix="vs yesterday" />
             </div>
@@ -702,13 +704,13 @@ export function AnalyticsDashboard() {
 
       {/* Contribution Calendar */}
       <Card className="border-zinc-800">
-        <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-3 md:p-6">
           <div>
-            <CardTitle>Gym Activity</CardTitle>
-            <CardDescription>{yearlyTotal} check-ins in {selectedYear}</CardDescription>
+            <CardTitle className="text-base md:text-lg">Gym Activity</CardTitle>
+            <CardDescription className="text-xs md:text-sm">{yearlyTotal} check-ins in {selectedYear}</CardDescription>
           </div>
           <select value={selectedYear} onChange={e => setSelectedYear(parseInt(e.target.value))}
-            className="border border-zinc-700 rounded px-3 py-1.5 bg-zinc-800 text-sm">
+            className="border border-zinc-700 rounded px-2 md:px-3 py-1 md:py-1.5 bg-zinc-800 text-xs md:text-sm">
             {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
           </select>
         </CardHeader>
@@ -762,36 +764,36 @@ export function AnalyticsDashboard() {
 
       {/* Line Graph */}
       <Card className="border-zinc-800">
-        <CardHeader className="flex flex-col md:flex-row md:items-center md:justify-between">
+        <CardHeader className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 p-3 md:p-6">
           <div>
-            <CardTitle>Active Sessions by Day and Time</CardTitle>
-            <CardDescription>Each line represents a 2-hour pair.</CardDescription>
+            <CardTitle className="text-base md:text-lg">Active Sessions by Day and Time</CardTitle>
+            <CardDescription className="text-xs md:text-sm">Each line represents a 2-hour pair.</CardDescription>
           </div>
-          <div className="mt-4 md:mt-0 flex items-center gap-3 flex-wrap">
-            <div className="flex items-center space-x-2">
-              <label htmlFor="monthPicker" className="text-sm text-muted-foreground whitespace-nowrap">Month:</label>
+          <div className="flex items-center gap-2 md:gap-3 flex-wrap">
+            <div className="flex items-center space-x-1 md:space-x-2">
+              <label htmlFor="monthPicker" className="text-xs md:text-sm text-muted-foreground whitespace-nowrap">Month:</label>
               <select id="monthPicker" value={selectedMonth}
                 onChange={e => { setSelectedMonth(e.target.value); setSelectedWeek("all") }}
-                className="border border-zinc-700 rounded px-2 py-1 bg-zinc-800 text-sm">
+                className="border border-zinc-700 rounded px-1.5 md:px-2 py-1 bg-zinc-800 text-xs md:text-sm">
                 {last12Months.map(({ key, label }) => <option key={key} value={key}>{label}</option>)}
               </select>
             </div>
-            <div className="flex items-center space-x-2">
-              <label htmlFor="weekPicker" className="text-sm text-muted-foreground whitespace-nowrap">Week:</label>
+            <div className="flex items-center space-x-1 md:space-x-2">
+              <label htmlFor="weekPicker" className="text-xs md:text-sm text-muted-foreground whitespace-nowrap">Week:</label>
               <select id="weekPicker" value={selectedWeek} onChange={e => setSelectedWeek(e.target.value)}
-                className="border border-zinc-700 rounded px-2 py-1 bg-zinc-800 text-sm min-w-[180px]">
+                className="border border-zinc-700 rounded px-1.5 md:px-2 py-1 bg-zinc-800 text-xs md:text-sm min-w-[120px] md:min-w-[180px]">
                 {availableWeeks.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
               </select>
             </div>
           </div>
         </CardHeader>
-        <CardContent className="h-[450px] flex flex-col md:flex-row">
-          <ResponsiveContainer width="100%" height={400} minWidth={0} minHeight={0}>
-            <LineChart data={lineData} margin={{ top: 30, right: 40, left: 20, bottom: 60 }}>
+        <CardContent className="h-[350px] md:h-[450px] flex flex-col md:flex-row p-2 md:p-6">
+          <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+            <LineChart data={lineData} margin={{ top: 10, right: 10, left: 0, bottom: 40 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-              <XAxis dataKey="day" label={{ value: "Day of Week", position: "bottom", offset: 20 }} tick={{ fontSize: 12 }} stroke="#71717a" />
-              <YAxis label={{ value: "Active Users", angle: -90, position: "insideLeft", offset: 10 }} allowDecimals={false} tick={{ fontSize: 12 }} domain={[0, "dataMax"]} stroke="#71717a" />
-              <Tooltip contentStyle={{ backgroundColor: "#18181b", borderRadius: 8, border: "1px solid #27272a" }}
+              <XAxis dataKey="day" label={{ value: "Day of Week", position: "bottom", offset: 10 }} tick={{ fontSize: 10 }} stroke="#71717a" />
+              <YAxis label={{ value: "Active Users", angle: -90, position: "insideLeft", offset: 10 }} allowDecimals={false} tick={{ fontSize: 10 }} domain={[0, "dataMax"]} stroke="#71717a" width={30} />
+              <Tooltip contentStyle={{ backgroundColor: "#18181b", borderRadius: 8, border: "1px solid #27272a", fontSize: 12 }}
                 formatter={(value: number, name: string) => [value, name]} labelStyle={{ fontWeight: 600 }} />
               {TIME_PAIRS.map(({ label }, index) => (
                 <Line key={label} type="monotone" dataKey={label} stroke={colors[index % colors.length]}
@@ -799,17 +801,17 @@ export function AnalyticsDashboard() {
               ))}
             </LineChart>
           </ResponsiveContainer>
-          <div className="w-full md:w-[15%] mt-4 md:mt-0 md:ml-4 flex flex-col">
-            <button className="mb-2 px-4 py-2 bg-indigo-600 text-white text-sm rounded hover:bg-indigo-700 transition"
+          <div className="w-full md:w-[15%] mt-2 md:mt-0 md:ml-4 flex flex-col shrink-0">
+            <button className="mb-2 px-3 py-1.5 md:px-4 md:py-2 bg-indigo-600 text-white text-xs md:text-sm rounded hover:bg-indigo-700 transition"
               onClick={() => setLegendOpen(prev => !prev)}>
               {legendOpen ? "Hide Legend" : "Show Legend"}
             </button>
             {legendOpen && (
-              <div className="overflow-y-auto border border-zinc-700 rounded p-2 max-h-[350px]" style={{ scrollbarWidth: "thin" }}>
+              <div className="overflow-y-auto border border-zinc-700 rounded p-2 max-h-[200px] md:max-h-[350px] grid grid-cols-2 md:grid-cols-1 gap-1" style={{ scrollbarWidth: "thin" }}>
                 {TIME_PAIRS.map(({ label }, index) => (
-                  <div key={label} className="flex items-center mb-2">
-                    <div className="w-4 h-4 rounded mr-2 flex-shrink-0" style={{ backgroundColor: colors[index % colors.length] }} />
-                    <span className="text-xs">{label}</span>
+                  <div key={label} className="flex items-center mb-1 md:mb-2">
+                    <div className="w-3 h-3 md:w-4 md:h-4 rounded mr-1.5 md:mr-2 flex-shrink-0" style={{ backgroundColor: colors[index % colors.length] }} />
+                    <span className="text-[10px] md:text-xs">{label}</span>
                   </div>
                 ))}
               </div>
@@ -820,19 +822,19 @@ export function AnalyticsDashboard() {
 
       {/* Monthly Trend */}
       <Card className="border-zinc-800">
-        <CardHeader>
-          <CardTitle>Monthly Check-ins</CardTitle>
-          <CardDescription>Last 12 months trend</CardDescription>
+        <CardHeader className="p-3 md:p-6">
+          <CardTitle className="text-base md:text-lg">Monthly Check-ins</CardTitle>
+          <CardDescription className="text-xs md:text-sm">Last 12 months trend</CardDescription>
         </CardHeader>
-        <CardContent className="h-[280px]">
+        <CardContent className="h-[220px] md:h-[280px] p-2 md:p-6">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={monthlyData}>
+            <LineChart data={monthlyData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-              <XAxis dataKey="month" stroke="#71717a" tick={{ fontSize: 12 }} />
-              <YAxis stroke="#71717a" tick={{ fontSize: 12 }} />
-              <Tooltip contentStyle={{ backgroundColor: "#18181b", borderRadius: 8, border: "1px solid #27272a" }} />
+              <XAxis dataKey="month" stroke="#71717a" tick={{ fontSize: 10 }} />
+              <YAxis stroke="#71717a" tick={{ fontSize: 10 }} width={30} />
+              <Tooltip contentStyle={{ backgroundColor: "#18181b", borderRadius: 8, border: "1px solid #27272a", fontSize: 12 }} />
               <Line type="monotone" dataKey="checkIns" stroke="#10b981" strokeWidth={2}
-                dot={{ fill: "#10b981", r: 3 }} activeDot={{ r: 5 }} />
+                dot={{ fill: "#10b981", r: 2 }} activeDot={{ r: 4 }} />
             </LineChart>
           </ResponsiveContainer>
         </CardContent>

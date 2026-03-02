@@ -276,10 +276,10 @@ export function MemberList({ users, onUpdate }: MemberListProps) {
       />
 
       {/* Filters */}
-      <div className="mb-4 flex gap-3 flex-wrap items-center">
+      <div className="mb-4 flex gap-2 md:gap-3 flex-wrap items-center">
         {/* Status Filter */}
         <Select value={statusFilter} onValueChange={(v: any) => setStatusFilter(v)}>
-          <SelectTrigger className="w-[160px]">
+          <SelectTrigger className="w-full sm:w-[140px]">
             <Filter className="w-4 h-4 mr-2" />
             <SelectValue placeholder="Status" />
           </SelectTrigger>
@@ -292,7 +292,7 @@ export function MemberList({ users, onUpdate }: MemberListProps) {
 
         {/* Plan Duration Filter */}
         <Select value={planFilter} onValueChange={setPlanFilter}>
-          <SelectTrigger className="w-[160px]">
+          <SelectTrigger className="w-[calc(50%-0.25rem)] sm:w-[140px]">
             <Filter className="w-4 h-4 mr-2" />
             <SelectValue placeholder="Plan" />
           </SelectTrigger>
@@ -308,7 +308,7 @@ export function MemberList({ users, onUpdate }: MemberListProps) {
 
         {/* Membership Type Filter */}
         <Select value={membershipTypeFilter} onValueChange={setMembershipTypeFilter}>
-          <SelectTrigger className="w-[160px]">
+          <SelectTrigger className="w-[calc(50%-0.25rem)] sm:w-[140px]">
             <Filter className="w-4 h-4 mr-2" />
             <SelectValue placeholder="Type" />
           </SelectTrigger>
@@ -328,16 +328,17 @@ export function MemberList({ users, onUpdate }: MemberListProps) {
         )}
 
         {/* Results Count */}
-        <div className="flex items-center text-sm text-muted-foreground ml-auto">
+        <div className="flex items-center text-xs sm:text-sm text-muted-foreground w-full sm:w-auto sm:ml-auto">
           Showing {filteredUsers.length} of {users.length} members
         </div>
       </div>
 
       {/* Bulk Download */}
       <div className="mb-4 flex justify-end">
-        <Button variant="outline" onClick={downloadTotalHoursCSV}>
+        <Button variant="outline" size="sm" onClick={downloadTotalHoursCSV}>
           <Download className="w-4 h-4 mr-2" />
-          Download Total Hours (CSV)
+          <span className="hidden sm:inline">Download Total Hours (CSV)</span>
+          <span className="sm:hidden">Export CSV</span>
         </Button>
       </div>
 
@@ -360,7 +361,7 @@ export function MemberList({ users, onUpdate }: MemberListProps) {
                     >
                       {user.name}
                     </button>
-                    <span className="text-sm text-muted-foreground font-mono">
+                    <span className="text-xs sm:text-sm text-muted-foreground font-mono truncate max-w-[120px] sm:max-w-none">
                       {user.userId}
                     </span>
                     <Badge variant={active ? "default" : "destructive"} className="text-xs">

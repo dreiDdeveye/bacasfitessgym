@@ -67,17 +67,17 @@ function App() {
       <Sidebar activeTab={activeTab} onTabChange={setActiveTab} onLogout={handleLogout} />
 
       <main className="flex-1 overflow-auto">
-        <div className="container mx-auto p-8 max-w-6xl">
-          <div className="flex items-center justify-between mb-8">
+        <div className="container mx-auto p-4 md:p-8 max-w-6xl pt-14 md:pt-8">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-6 md:mb-8 gap-3">
             <div>
-              <h1 className="text-3xl font-bold">
+              <h1 className="text-2xl md:text-3xl font-bold">
                 {activeTab === "scanner" && "QR Code Scanner"}
                 {activeTab === "members" && "Member Management"}
                 {activeTab === "active" && "Active Sessions"}
                 {activeTab === "logs" && "Scan Logs"}
                 {activeTab === "analytics" && "Analytics Dashboard"}
               </h1>
-              <p className="text-muted-foreground mt-1">
+              <p className="text-muted-foreground mt-1 text-sm md:text-base">
                 {activeTab === "scanner" && "Scan member QR codes for check-in and check-out"}
                 {activeTab === "members" && "Manage gym members and subscriptions"}
                 {activeTab === "active" && "View currently checked-in members"}
@@ -88,11 +88,11 @@ function App() {
 
             {activeTab === "members" && (
               <div className="flex gap-2">
-                <Button variant="outline" onClick={() => setShowBulkImport(true)}>
+                <Button variant="outline" size="sm" className="flex-1 sm:flex-none" onClick={() => setShowBulkImport(true)}>
                   <Upload className="w-4 h-4 mr-2" />
                   Bulk Import
                 </Button>
-                <Button onClick={() => setShowAddDialog(true)}>
+                <Button size="sm" className="flex-1 sm:flex-none" onClick={() => setShowAddDialog(true)}>
                   <Plus className="w-4 h-4 mr-2" />
                   Add Member
                 </Button>
