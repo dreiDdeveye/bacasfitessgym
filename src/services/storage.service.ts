@@ -11,6 +11,8 @@ import type {
   LiabilityWaiver,
 } from "@/src/types"
 import { supabase } from "./supabase"
+import { offlineCache } from "./offline-cache.service"
+import { offlineQueue } from "./offline-queue.service"
 
 //
 // ==============================
@@ -26,10 +28,10 @@ export async function getUsers(): Promise<User[]> {
 
   if (error) {
     console.error("Error fetching users:", error)
-    return []
+    return offlineCache.getCachedUsers()
   }
 
-  return (data || []).map((user) => ({
+  const users = (data || []).map((user) => ({
     userId: user.user_id,
     name: user.name,
     email: user.email,
@@ -44,6 +46,8 @@ export async function getUsers(): Promise<User[]> {
     createdAt: user.created_at,
     updatedAt: user.updated_at,
   }))
+  offlineCache.cacheUsers(users)
+  return users
 }
 
 export async function getUserById(userId: string): Promise<User | null> {
@@ -53,9 +57,11 @@ export async function getUserById(userId: string): Promise<User | null> {
     .eq("user_id", userId)
     .maybeSingle()
 
-  if (error || !data) return null
+  if (error || !data) {
+    return offlineCache.getCachedUser(userId)
+  }
 
-  return {
+  const user: User = {
     userId: data.user_id,
     name: data.name,
     email: data.email,
@@ -70,6 +76,8 @@ export async function getUserById(userId: string): Promise<User | null> {
     createdAt: data.created_at,
     updatedAt: data.updated_at,
   }
+  offlineCache.cacheUser(user)
+  return user
 }
 
 export async function addUser(user: User): Promise<void> {
@@ -145,9 +153,9 @@ export async function deleteUser(userId: string): Promise<void> {
 
 export async function getSubscriptions(): Promise<Subscription[]> {
   const { data, error } = await supabase.from("subscriptions").select("*")
-  if (error) return []
+  if (error) return offlineCache.getCachedSubscriptions()
 
-  return (data || []).map((sub) => ({
+  const subs = (data || []).map((sub) => ({
     userId: sub.user_id,
     startDate: sub.start_date,
     endDate: sub.end_date,
@@ -159,6 +167,8 @@ export async function getSubscriptions(): Promise<Subscription[]> {
     paymentDate: sub.payment_date,
     createdAt: sub.created_at,
   }))
+  offlineCache.cacheSubscriptions(subs)
+  return subs
 }
 
 export async function getSubscriptionByUserId(
@@ -170,9 +180,11 @@ export async function getSubscriptionByUserId(
     .eq("user_id", userId)
     .maybeSingle()
 
-  if (error || !data) return null
+  if (error || !data) {
+    return offlineCache.getCachedSubscription(userId)
+  }
 
-  return {
+  const sub: Subscription = {
     userId: data.user_id,
     startDate: data.start_date,
     endDate: data.end_date,
@@ -184,6 +196,8 @@ export async function getSubscriptionByUserId(
     paymentDate: data.payment_date,
     createdAt: data.created_at,
   }
+  offlineCache.cacheSubscription(sub)
+  return sub
 }
 
 export async function addOrUpdateSubscription(
@@ -504,17 +518,20 @@ export async function addScanLog(log: ScanLog): Promise<void> {
     return
   }
 
-  const { error } = await supabase.from("scan_logs").insert([
-    {
-      user_id: log.userId,
-      user_name: log.userName,
-      timestamp: log.timestamp,
-      action: log.action,
-      status: log.status,
-    },
-  ])
+  const insertData = {
+    user_id: log.userId,
+    user_name: log.userName,
+    timestamp: log.timestamp,
+    action: log.action,
+    status: log.status,
+  }
 
-  if (error) console.error("Error adding scan log:", error)
+  const { error } = await supabase.from("scan_logs").insert([insertData])
+
+  if (error) {
+    console.error("Error adding scan log, queuing offline:", error)
+    offlineQueue.enqueue("scan_logs", "insert", insertData)
+  }
 }
 
 export async function getTodayScanLogs(): Promise<ScanLog[]> {
@@ -583,13 +600,17 @@ export async function getActiveSessionByUserId(
     .limit(1)
     .maybeSingle()
 
-  if (error || !data) return null
+  if (error || !data) {
+    return offlineCache.getCachedActiveSession(userId)
+  }
 
-  return {
+  const session: ActiveSession = {
     userId: data.user_id,
     userName: data.user_name,
     checkInTime: data.check_in_time,
   }
+  offlineCache.updateCachedSession(userId, session)
+  return session
 }
 
 export async function getActiveSessions(): Promise<ActiveSession[]> {
@@ -598,13 +619,15 @@ export async function getActiveSessions(): Promise<ActiveSession[]> {
     .select("*")
     .order("check_in_time", { ascending: false })
 
-  if (error) return []
+  if (error) return offlineCache.getCachedActiveSessions()
 
-  return (data || []).map((s) => ({
+  const sessions = (data || []).map((s) => ({
     userId: s.user_id,
     userName: s.user_name,
     checkInTime: s.check_in_time,
   }))
+  offlineCache.cacheActiveSessions(sessions)
+  return sessions
 }
 
 export async function isUserCheckedIn(userId: string): Promise<boolean> {
@@ -613,15 +636,21 @@ export async function isUserCheckedIn(userId: string): Promise<boolean> {
 }
 
 export async function startSession(session: ActiveSession): Promise<void> {
-  const { error } = await supabase.from("active_sessions").insert([
-    {
-      user_id: session.userId,
-      user_name: session.userName,
-      check_in_time: session.checkInTime,
-    },
-  ])
+  const insertData = {
+    user_id: session.userId,
+    user_name: session.userName,
+    check_in_time: session.checkInTime,
+  }
 
-  if (error) console.error("Error starting session:", error)
+  const { error } = await supabase.from("active_sessions").insert([insertData])
+
+  if (error) {
+    console.error("Error starting session, queuing offline:", error)
+    offlineQueue.enqueue("active_sessions", "insert", insertData)
+  }
+
+  // Always update local cache so offline check-in/out flow works
+  offlineCache.updateCachedSession(session.userId, session)
 }
 
 export async function endSession(
@@ -636,9 +665,15 @@ export async function endSession(
     .eq("user_id", userId)
 
   if (error) {
-    console.error("Error ending session:", error)
-    return null
+    console.error("Error ending session, queuing offline:", error)
+    offlineQueue.enqueue("active_sessions", "delete", {
+      _deleteKey: "user_id",
+      _deleteValue: userId,
+    })
   }
+
+  // Always update local cache so offline flow works
+  offlineCache.updateCachedSession(userId, null)
 
   return session
 }

@@ -27,12 +27,15 @@ import {
   CalendarDays,
   CalendarClock,
   Wifi,
+  WifiOff,
   ShieldAlert,
+  CloudOff,
 } from "lucide-react"
 import { useQRScanner } from "@/src/hooks/use-qr-scanner"
 import { accessService } from "@/src/services/access.service"
 import { storageService } from "@/src/services/storage.service"
 import { subscriptionService } from "@/src/services/subscription.service"
+import { offlineQueue } from "@/src/services/offline-queue.service"
 import type { ScanLog, Subscription, User as UserType } from "@/src/types"
 import { playLongBeep, speakCheckIn, speakCheckOut, speakExpired } from "@/src/lib/sound"
 import {
@@ -96,7 +99,8 @@ export function ScannerInterface() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all")
   const [membershipFilter, setMembershipFilter] = useState<MembershipFilter>("all")
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date())
-  const [isOnline, setIsOnline] = useState(true)
+  const [isOnline, setIsOnline] = useState(typeof navigator !== "undefined" ? navigator.onLine : true)
+  const [pendingSyncCount, setPendingSyncCount] = useState(0)
 
   const formatDate = (date?: string) => {
     if (!date) return "—"
@@ -273,6 +277,7 @@ export function ScannerInterface() {
     }
 
     setLastScan({ ...result, subscription, user })
+    setPendingSyncCount(offlineQueue.getPendingCount())
     updateStats()
   }
 
@@ -298,6 +303,34 @@ export function ScannerInterface() {
   useEffect(() => { if (!lastScan) return; const t = setTimeout(() => setLastScan(null), 5000); return () => clearTimeout(t) }, [lastScan])
   useEffect(() => { if (!duplicateScan) return; const t = setTimeout(() => setDuplicateScan(null), 3000); return () => clearTimeout(t) }, [duplicateScan])
 
+  // Network detection + offline sync
+  useEffect(() => {
+    const handleOnline = async () => {
+      setIsOnline(true)
+      const { synced } = await offlineQueue.flushQueue()
+      if (synced > 0) console.log(`Synced ${synced} offline items`)
+      setPendingSyncCount(offlineQueue.getPendingCount())
+      updateStats()
+    }
+    const handleOffline = () => setIsOnline(false)
+
+    window.addEventListener("online", handleOnline)
+    window.addEventListener("offline", handleOffline)
+
+    // Check for pending items on load and try to flush
+    setPendingSyncCount(offlineQueue.getPendingCount())
+    if (navigator.onLine && offlineQueue.getPendingCount() > 0) {
+      offlineQueue.flushQueue().then(() => {
+        setPendingSyncCount(offlineQueue.getPendingCount())
+      })
+    }
+
+    return () => {
+      window.removeEventListener("online", handleOnline)
+      window.removeEventListener("offline", handleOffline)
+    }
+  }, [])
+
   const handleMembersCardClick = (filter?: MembershipFilter) => {
     setMembershipFilter(filter || "all")
     setShowMembersDialog(true)
@@ -319,8 +352,18 @@ export function ScannerInterface() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
-        <Wifi className={`w-3 h-3 ${isOnline ? "text-emerald-500" : "text-red-500"}`} />
+        {isOnline ? (
+          <Wifi className="w-3 h-3 text-emerald-500" />
+        ) : (
+          <WifiOff className="w-3 h-3 text-red-500" />
+        )}
         <span>{isOnline ? "Live" : "Offline"} • Updated {formatLastUpdate(lastUpdate)}</span>
+        {pendingSyncCount > 0 && (
+          <span className="flex items-center gap-1 text-yellow-500">
+            <CloudOff className="w-3 h-3" />
+            {pendingSyncCount} pending sync
+          </span>
+        )}
       </div>
 
       <div className="grid grid-cols-3 gap-2 md:gap-4">
