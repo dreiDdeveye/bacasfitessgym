@@ -8,6 +8,7 @@ import { MemberList } from "./components/members/member-list"
 import { ActiveSessions } from "./components/active/active-sessions"
 import { ScanLogs } from "./components/logs/scan-logs"
 import { AnalyticsDashboard } from "./components/analytics/analytics-dashboard"
+import { BackupPanel } from "./components/backup/backup-panel"
 import  AddMemberDialog  from "./components/members/add-member-dialog"
 import { BulkImportDialog } from "./components/members/bulk-import-dialog"
 import { Button } from "@/components/ui/button"
@@ -77,6 +78,7 @@ function App() {
                 {activeTab === "active" && "Active Sessions"}
                 {activeTab === "logs" && "Scan Logs"}
                 {activeTab === "analytics" && "Analytics Dashboard"}
+                {activeTab === "backup" && "Data Backup"}
               </h1>
               <p className="text-muted-foreground mt-1 text-sm md:text-base">
                 {activeTab === "scanner" && "Scan member QR codes for check-in and check-out"}
@@ -84,6 +86,7 @@ function App() {
                 {activeTab === "active" && "View currently checked-in members"}
                 {activeTab === "logs" && "View scan history and activity logs"}
                 {activeTab === "analytics" && "Visualize gym attendance trends and patterns"}
+                {activeTab === "backup" && "Back up gym data to Google Sheets"}
               </p>
             </div>
 
@@ -106,6 +109,7 @@ function App() {
           {activeTab === "active" && <ActiveSessions onUpdate={handleRefresh} />}
           {activeTab === "logs" && <ScanLogs />}
           {activeTab === "analytics" && <AnalyticsDashboard />}
+          {activeTab === "backup" && <BackupPanel />}
         </div>
       </main>
 

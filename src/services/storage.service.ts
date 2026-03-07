@@ -777,6 +777,84 @@ export async function addUsers(users: User[]): Promise<void> {
 
 //
 // ==============================
+// BULK FETCH (for backup)
+// ==============================
+//
+
+export async function getAllMedicalHistories(): Promise<MedicalHistory[]> {
+  const { data, error } = await supabase
+    .from("medical_history")
+    .select("*")
+
+  if (error || !data) return []
+
+  return data.map((d) => ({
+    userId: d.user_id,
+    heartProblems: d.heart_problems,
+    bloodPressureProblems: d.blood_pressure_problems,
+    chestPainExercising: d.chest_pain_exercising,
+    asthmaBreathingProblems: d.asthma_breathing_problems,
+    jointProblems: d.joint_problems,
+    neckBackProblems: d.neck_back_problems,
+    pregnantRecentBirth: d.pregnant_recent_birth,
+    otherMedicalConditions: d.other_medical_conditions,
+    otherMedicalDetails: d.other_medical_details || undefined,
+    smoking: d.smoking,
+    medication: d.medication,
+    medicationDetails: d.medication_details || undefined,
+    createdAt: d.created_at,
+    updatedAt: d.updated_at,
+  }))
+}
+
+export async function getAllEmergencyContacts(): Promise<EmergencyContact[]> {
+  const { data, error } = await supabase
+    .from("emergency_contacts")
+    .select("*")
+
+  if (error || !data) return []
+
+  return data.map((d) => ({
+    userId: d.user_id,
+    contactName: d.contact_name,
+    contactNumber: d.contact_number,
+    createdAt: d.created_at,
+    updatedAt: d.updated_at,
+  }))
+}
+
+export async function getAllLiabilityWaivers(): Promise<LiabilityWaiver[]> {
+  const { data, error } = await supabase
+    .from("liability_waivers")
+    .select("*")
+
+  if (error || !data) return []
+
+  return data.map((d) => ({
+    userId: d.user_id,
+    signatureName: d.signature_name,
+    signedDate: d.signed_date,
+    waiverAccepted: d.waiver_accepted,
+    createdAt: d.created_at,
+  }))
+}
+
+export async function getUserIdCounter(): Promise<{ id: number; lastNumber: number } | null> {
+  const { data, error } = await supabase
+    .from("user_id_counter")
+    .select("*")
+    .single()
+
+  if (error || !data) return null
+
+  return {
+    id: data.id,
+    lastNumber: data.last_number,
+  }
+}
+
+//
+// ==============================
 // EXPORT
 // ==============================
 //
@@ -811,6 +889,10 @@ export const storageService = {
   getSubscriptionHistory,
   archiveSubscription,
   addUsers,
+  getAllMedicalHistories,
+  getAllEmergencyContacts,
+  getAllLiabilityWaivers,
+  getUserIdCounter,
 }
 
 export * as storage from "./storage.service"

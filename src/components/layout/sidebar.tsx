@@ -8,6 +8,7 @@ import {
   ScanLine,
   ClipboardList,
   BarChart3,
+  HardDriveDownload,
   ChevronLeft,
   ChevronRight,
   LogOut,
@@ -29,6 +30,7 @@ const navigation = [
   { id: "active", label: "Active Now", icon: Activity },
   { id: "logs", label: "Scan Logs", icon: ClipboardList },
   { id: "analytics", label: "Analytics", icon: BarChart3 },
+  { id: "backup", label: "Backup", icon: HardDriveDownload },
 ]
 
 export function Sidebar({ activeTab, onTabChange, onLogout }: SidebarProps) {
