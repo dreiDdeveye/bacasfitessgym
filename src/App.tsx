@@ -16,6 +16,7 @@ import { storageService } from "@/src/services/storage.service"
 import { subscriptionService } from "@/src/services/subscription.service"
 import type { User } from "@/src/types"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import { InstallPrompt } from "./components/pwa/install-prompt"
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
@@ -111,6 +112,8 @@ function App() {
       <AddMemberDialog open={showAddDialog} onOpenChange={setShowAddDialog} onMemberAdded={handleRefresh} />
 
       <BulkImportDialog open={showBulkImport} onOpenChange={setShowBulkImport} onImportComplete={handleRefresh} />
+
+      <InstallPrompt />
     </div>
   )
 }
