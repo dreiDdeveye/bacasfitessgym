@@ -18,6 +18,7 @@ import { subscriptionService } from "@/src/services/subscription.service"
 import type { User } from "@/src/types"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { InstallPrompt } from "./components/pwa/install-prompt"
+import { useAutoBackup } from "./hooks/use-auto-backup"
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
@@ -27,6 +28,9 @@ function App() {
   const [showBulkImport, setShowBulkImport] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   const [expiringCount, setExpiringCount] = useState(0)
+
+  // Run auto-backup in the background when authenticated
+  useAutoBackup()
 
   useEffect(() => {
     const token = localStorage.getItem("bacasfitness_admin_token")

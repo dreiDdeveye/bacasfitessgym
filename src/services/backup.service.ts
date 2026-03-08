@@ -26,15 +26,57 @@ export interface BackupProgress {
 
 type ProgressCallback = (progress: BackupProgress) => void
 
-const BACKUP_URL_KEY = "bacasfitness_sheets_backup_url"
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzuEZSHMlQnaV8NU2rQRCDZyEEB_pQSno-sNj6w20vFg4GoG6eNZF6hSOYv3fpDXzFF/exec"
 const LAST_BACKUP_KEY = "bacasfitness_last_backup"
+const AUTO_BACKUP_ENABLED_KEY = "bacasfitness_auto_backup_enabled"
+const AUTO_BACKUP_STATUS_KEY = "bacasfitness_auto_backup_status"
+const SPREADSHEET_URL_KEY = "bacasfitness_spreadsheet_url"
 
-export function getBackupUrl(): string | null {
-  return localStorage.getItem(BACKUP_URL_KEY)
+export interface AutoBackupStatus {
+  lastRun: string | null
+  lastResult: "success" | "failed" | null
+  lastMessage: string | null
 }
 
-export function setBackupUrl(url: string): void {
-  localStorage.setItem(BACKUP_URL_KEY, url)
+export function isAutoBackupEnabled(): boolean {
+  return localStorage.getItem(AUTO_BACKUP_ENABLED_KEY) === "true"
+}
+
+export function setAutoBackupEnabled(enabled: boolean): void {
+  localStorage.setItem(AUTO_BACKUP_ENABLED_KEY, String(enabled))
+}
+
+export function getAutoBackupStatus(): AutoBackupStatus {
+  const raw = localStorage.getItem(AUTO_BACKUP_STATUS_KEY)
+  if (!raw) return { lastRun: null, lastResult: null, lastMessage: null }
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return { lastRun: null, lastResult: null, lastMessage: null }
+  }
+}
+
+function setAutoBackupStatus(status: AutoBackupStatus): void {
+  localStorage.setItem(AUTO_BACKUP_STATUS_KEY, JSON.stringify(status))
+}
+
+export function getSpreadsheetUrl(): string | null {
+  return localStorage.getItem(SPREADSHEET_URL_KEY)
+}
+
+function setSpreadsheetUrl(url: string): void {
+  localStorage.setItem(SPREADSHEET_URL_KEY, url)
+}
+
+export async function runAutoBackup(): Promise<AutoBackupStatus> {
+  const result = await backupToGoogleSheets()
+  const status: AutoBackupStatus = {
+    lastRun: new Date().toISOString(),
+    lastResult: result.success ? "success" : "failed",
+    lastMessage: result.message,
+  }
+  setAutoBackupStatus(status)
+  return status
 }
 
 export function getLastBackup(): string | null {
@@ -46,9 +88,9 @@ function setLastBackup(date: string): void {
 }
 
 export async function backupToGoogleSheets(
-  scriptUrl: string,
   onProgress?: ProgressCallback,
 ): Promise<{ success: boolean; message: string; spreadsheetUrl?: string }> {
+  const scriptUrl = SCRIPT_URL
   const totalSteps = 10
   let currentStep = 0
 
@@ -58,7 +100,6 @@ export async function backupToGoogleSheets(
   }
 
   try {
-    // 1. Fetch all data
     progress("Fetching users...")
     const users = await getUsers()
 
@@ -86,7 +127,6 @@ export async function backupToGoogleSheets(
     progress("Fetching ID counter...")
     const idCounter = await getUserIdCounter()
 
-    // 2. Transform into sheet data
     const sheets: SheetData[] = [
       {
         sheetName: "Users",
@@ -164,12 +204,10 @@ export async function backupToGoogleSheets(
       },
     ]
 
-    // 3. Send to Google Apps Script
     progress("Uploading to Google Sheets...")
 
     const totalRecords = sheets.reduce((sum, s) => sum + s.rows.length, 0)
 
-    // Proxy through our API route to avoid CORS issues with Google Apps Script
     const response = await fetch("/api/backup", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -187,6 +225,9 @@ export async function backupToGoogleSheets(
 
     if (result.success) {
       setLastBackup(new Date().toISOString())
+      if (result.spreadsheetUrl) {
+        setSpreadsheetUrl(result.spreadsheetUrl)
+      }
     }
 
     return {
