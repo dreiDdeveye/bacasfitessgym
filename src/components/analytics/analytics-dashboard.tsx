@@ -34,7 +34,7 @@ import {
 } from "date-fns"
 import type { ScanLog } from "@/src/types"
 import { storageService } from "@/src/services/storage.service"
-import { TrendingUp, TrendingDown, Minus, Clock, Users, Calendar, Activity, Moon } from "lucide-react"
+import { TrendingUp, TrendingDown, Minus, Clock, Users, Calendar, Activity, Moon, LogIn, LogOut, Timer, UserCheck } from "lucide-react"
 
 // ─── Philippine Time helpers (UTC+8) ─────────────────────────────────────────
 // Supabase stores timestamps as UTC. We shift by +8h then use getUTC*() methods
@@ -71,6 +71,15 @@ function phMonth(ts: string)     { return toPHDate(ts).getUTCMonth() }
 function phDayOfWeek(ts: string) { return toPHDate(ts).getUTCDay() }
 function phHour(ts: string)      { return toPHDate(ts).getUTCHours() }
 // ─────────────────────────────────────────────────────────────────────────────
+
+interface DaySession {
+  userId: string
+  userName: string
+  checkInTime: string
+  checkOutTime: string | null
+  durationMs: number
+  isActive: boolean
+}
 
 interface MonthlyData {
   month: string
@@ -198,6 +207,8 @@ export function AnalyticsDashboard() {
   const [weeklyBreakdown, setWeeklyBreakdown]   = useState<{ label: string; value: number }[]>([])
   const [last7DaysData, setLast7DaysData]       = useState<number[]>([])
   const [hourlyDistribution, setHourlyDistribution] = useState<number[]>([])
+
+  const [todaySessions, setTodaySessions] = useState<DaySession[]>([])
 
   const [filteredPeakHour, setFilteredPeakHour]         = useState<number | null>(null)
   const [filteredQuietestHour, setFilteredQuietestHour] = useState<number | null>(null)
@@ -438,6 +449,69 @@ export function AnalyticsDashboard() {
       })
     }
     setMonthlyData(monthly)
+
+    // ── Today's Sessions ─────────────────────────────────────────────────────
+    buildTodaySessions(logs, todayStr)
+  }
+
+  function buildTodaySessions(allLogs: ScanLog[], todayStr: string) {
+    const todayLogs = allLogs
+      .filter(l => l.status === "success" && (l.action === "check-in" || l.action === "check-out") && toPHDateString(l.timestamp) === todayStr)
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+
+    const sessions: DaySession[] = []
+    const checkInMap = new Map<string, ScanLog>()
+
+    for (const log of todayLogs) {
+      if (log.action === "check-in") {
+        // If there's already an unmatched check-in for this user, close it as active
+        if (checkInMap.has(log.userId)) {
+          const prev = checkInMap.get(log.userId)!
+          sessions.push({
+            userId: prev.userId,
+            userName: prev.userName,
+            checkInTime: prev.timestamp,
+            checkOutTime: null,
+            durationMs: new Date().getTime() - new Date(prev.timestamp).getTime(),
+            isActive: true,
+          })
+        }
+        checkInMap.set(log.userId, log)
+      } else if (log.action === "check-out") {
+        const checkIn = checkInMap.get(log.userId)
+        if (checkIn) {
+          sessions.push({
+            userId: checkIn.userId,
+            userName: checkIn.userName,
+            checkInTime: checkIn.timestamp,
+            checkOutTime: log.timestamp,
+            durationMs: new Date(log.timestamp).getTime() - new Date(checkIn.timestamp).getTime(),
+            isActive: false,
+          })
+          checkInMap.delete(log.userId)
+        }
+      }
+    }
+
+    // Remaining unmatched check-ins are still active
+    for (const [, log] of checkInMap) {
+      sessions.push({
+        userId: log.userId,
+        userName: log.userName,
+        checkInTime: log.timestamp,
+        checkOutTime: null,
+        durationMs: new Date().getTime() - new Date(log.timestamp).getTime(),
+        isActive: true,
+      })
+    }
+
+    // Sort: active first, then by check-in time (most recent first)
+    sessions.sort((a, b) => {
+      if (a.isActive !== b.isActive) return a.isActive ? -1 : 1
+      return new Date(b.checkInTime).getTime() - new Date(a.checkInTime).getTime()
+    })
+
+    setTodaySessions(sessions)
   }
 
   // ── Contribution heatmap ──────────────────────────────────────────────────
@@ -701,6 +775,88 @@ export function AnalyticsDashboard() {
           </CardHeader>
         </Card>
       </div>
+
+      {/* Today's Sessions Preview */}
+      <Card className="border-zinc-800">
+        <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-3 md:p-6">
+          <div>
+            <CardTitle className="text-base md:text-lg flex items-center gap-2">
+              <UserCheck className="w-4 h-4 md:w-5 md:h-5 text-emerald-500" />
+              Today&apos;s Sessions
+            </CardTitle>
+            <CardDescription className="text-xs md:text-sm">
+              {todaySessions.length} session{todaySessions.length !== 1 ? "s" : ""} today
+              {todaySessions.filter(s => s.isActive).length > 0 && (
+                <span className="ml-2 text-emerald-500">
+                  ({todaySessions.filter(s => s.isActive).length} active now)
+                </span>
+              )}
+            </CardDescription>
+          </div>
+        </CardHeader>
+        <CardContent className="p-3 md:p-6 pt-0 md:pt-0">
+          {todaySessions.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <Clock className="w-8 h-8 mx-auto mb-2 opacity-50" />
+              <p className="text-sm">No sessions recorded today</p>
+            </div>
+          ) : (
+            <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1" style={{ scrollbarWidth: "thin" }}>
+              {todaySessions.map((session, i) => (
+                <div key={`${session.userId}-${i}`}
+                  className={`flex items-center gap-3 p-2.5 md:p-3 rounded-lg border transition-colors ${
+                    session.isActive
+                      ? "border-emerald-500/30 bg-emerald-500/5"
+                      : "border-zinc-800 bg-zinc-900/30"
+                  }`}>
+                  {/* Status indicator */}
+                  <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                    session.isActive ? "bg-emerald-500 animate-pulse" : "bg-zinc-600"
+                  }`} />
+
+                  {/* Member info */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium text-sm truncate">{session.userName}</span>
+                      <span className="text-[10px] text-muted-foreground font-mono">{session.userId}</span>
+                    </div>
+                    <div className="flex items-center gap-3 mt-1 text-[11px] text-muted-foreground">
+                      <span className="flex items-center gap-1">
+                        <LogIn className="w-3 h-3 text-emerald-500" />
+                        {new Date(new Date(session.checkInTime).getTime() + PH_OFFSET_MS).toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "UTC" })}
+                      </span>
+                      {session.checkOutTime ? (
+                        <span className="flex items-center gap-1">
+                          <LogOut className="w-3 h-3 text-red-400" />
+                          {new Date(new Date(session.checkOutTime).getTime() + PH_OFFSET_MS).toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "UTC" })}
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1 text-emerald-500">
+                          <Activity className="w-3 h-3" />
+                          In progress
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Duration */}
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <Timer className="w-3 h-3 text-muted-foreground" />
+                    <span className={`text-xs font-medium ${session.isActive ? "text-emerald-400" : "text-muted-foreground"}`}>
+                      {(() => {
+                        const mins = Math.floor(session.durationMs / 60000)
+                        const hrs = Math.floor(mins / 60)
+                        if (hrs > 0) return `${hrs}h ${mins % 60}m`
+                        return `${mins}m`
+                      })()}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Contribution Calendar */}
       <Card className="border-zinc-800">
