@@ -45,7 +45,7 @@ import {
   startOfYear,
 } from "date-fns"
 
-const SCAN_COOLDOWN_SECONDS = 10
+const SCAN_COOLDOWN_SECONDS = 60
 
 type ScanResult = {
   success: boolean
