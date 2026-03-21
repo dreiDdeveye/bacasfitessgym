@@ -8,9 +8,10 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
+import { Textarea } from "@/components/ui/textarea"
 import { ChevronLeft, ChevronRight } from "lucide-react"
 import { storageService } from "@/src/services/storage.service"
-import type { User, Subscription, MedicalHistory, EmergencyContact, LiabilityWaiver } from "@/src/types"
+import type { User, Subscription, MedicalHistory, EmergencyContact, LiabilityWaiver, Payment } from "@/src/types"
 
 const subscriptionPlans = [
   { label: "1 Month", value: "1", months: 1 },
@@ -20,7 +21,6 @@ const subscriptionPlans = [
 
 // ==================== DATE UTILITIES ====================
 
-// Format today as dd/mm/yyyy
 function getTodayFormatted(): string {
   const now = new Date()
   const day = String(now.getDate()).padStart(2, "0")
@@ -29,7 +29,6 @@ function getTodayFormatted(): string {
   return `${day}/${month}/${year}`
 }
 
-// Parse dd/mm/yyyy string to Date object
 function parseDate(dateStr: string): Date | null {
   if (!dateStr) return null
   const parts = dateStr.split("/")
@@ -48,12 +47,10 @@ function parseDate(dateStr: string): Date | null {
   return date
 }
 
-// Check if date string is valid
 function isValidDateString(dateStr: string): boolean {
   return parseDate(dateStr) !== null
 }
 
-// Format Date object to dd/mm/yyyy string
 function formatDate(date: Date): string {
   const day = String(date.getDate()).padStart(2, "0")
   const month = String(date.getMonth() + 1).padStart(2, "0")
@@ -61,7 +58,6 @@ function formatDate(date: Date): string {
   return `${day}/${month}/${year}`
 }
 
-// Add months to a date string
 function addMonthsToDateString(dateStr: string, months: number): string {
   const date = parseDate(dateStr)
   if (!date) return ""
@@ -69,7 +65,6 @@ function addMonthsToDateString(dateStr: string, months: number): string {
   return formatDate(date)
 }
 
-// Add days to a date string
 function addDaysToDateString(dateStr: string, days: number): string {
   const date = parseDate(dateStr)
   if (!date) return ""
@@ -77,7 +72,6 @@ function addDaysToDateString(dateStr: string, days: number): string {
   return formatDate(date)
 }
 
-// Format date input with auto slashes
 function formatDateInput(value: string): string {
   const digits = value.replace(/\D/g, "")
   let formatted = ""
@@ -89,8 +83,6 @@ function formatDateInput(value: string): string {
   }
   return formatted
 }
-
-// ==================== DATE INPUT COMPONENT ====================
 
 function DateInput({
   value,
@@ -137,7 +129,7 @@ interface AddMemberDialogProps {
 export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: AddMemberDialogProps) {
   const [currentStep, setCurrentStep] = useState(1)
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const totalSteps = 5
+  const totalSteps = 6
 
   const [formData, setFormData] = useState({
     name: "",
@@ -156,8 +148,22 @@ export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: A
     isWalkIn: false,
     startDate: getTodayFormatted(),
     endDate: addMonthsToDateString(getTodayFormatted(), 1),
-    coaching: "",
+    // Amount inputs for each membership type
+    monthlyAmount1: "",   // 1 month
+    monthlyAmount6: "",   // 6 months
+    monthlyAmount12: "",  // 1 year
+    dailyAmount: "",      // daily pass
+    walkInAmount: "",     // walk-in
+    // Payment fields (now in step 3)
     paymentStatus: "not paid",
+    paymentAmount: "",    // Manual payment input
+    paymentMethod: "",
+    paymentDate: getTodayFormatted(),
+    referenceNumber: "",
+    paymentNotes: "",
+    // Coaching (now in step 4)
+    coaching: "",
+    coachingAmount: "",   // Manual coaching input
     heartProblems: false,
     bloodPressureProblems: false,
     chestPain: false,
@@ -218,18 +224,58 @@ export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: A
         return true
       case 2:
         if (!formData.availAnnualPlan) { alert("Please select if you want to avail annual membership plan"); return false }
-        if (formData.availAnnualPlan === "yes" && !formData.membershipCategory) { alert("Please select membership type (Monthly or Daily)"); return false }
+        if (formData.availAnnualPlan === "yes") {
+          if (!formData.membershipCategory) { alert("Please select membership type (Monthly or Daily)"); return false }
+          if (formData.membershipCategory === "monthly") {
+            const amount = formData.subscriptionPlan === "1" ? formData.monthlyAmount1 
+                         : formData.subscriptionPlan === "6" ? formData.monthlyAmount6 
+                         : formData.monthlyAmount12
+            if (!amount || parseFloat(amount) <= 0) {
+              alert("Please enter the amount for the selected monthly plan")
+              return false
+            }
+          } else if (formData.membershipCategory === "daily") {
+            if (!formData.dailyAmount || parseFloat(formData.dailyAmount) <= 0) {
+              alert("Please enter the daily amount")
+              return false
+            }
+          }
+        } else if (formData.availAnnualPlan === "no") {
+          if (!formData.walkInAmount || parseFloat(formData.walkInAmount) <= 0) {
+            alert("Please enter the walk-in amount")
+            return false
+          }
+        }
         if (!isValidDateString(formData.startDate)) { alert("Please enter a valid start date (dd/mm/yyyy)"); return false }
         if (formData.availAnnualPlan === "no" && !isValidDateString(formData.endDate)) { alert("Please enter a valid end date (dd/mm/yyyy)"); return false }
         return true
       case 3:
-        if (!formData.coaching || !formData.paymentStatus) { alert("Please complete coaching preference and payment status"); return false }
+        // Payment validation
+        if (!formData.paymentStatus) { alert("Please select payment status"); return false }
+        if (formData.paymentStatus === "paid") {
+          if (!formData.paymentAmount || parseFloat(formData.paymentAmount) <= 0) {
+            alert("Please enter a valid payment amount")
+            return false
+          }
+          if (!formData.paymentMethod) { alert("Please select payment method"); return false }
+          if (!isValidDateString(formData.paymentDate)) { alert("Please enter a valid payment date"); return false }
+        }
         return true
       case 4:
+        // Coaching validation
+        if (!formData.coaching) { alert("Please select coaching preference"); return false }
+        if (formData.coaching === "yes") {
+          if (!formData.coachingAmount || parseFloat(formData.coachingAmount) <= 0) {
+            alert("Please enter coaching amount")
+            return false
+          }
+        }
+        return true
+      case 5:
         if (formData.otherMedicalConditions && !formData.otherMedicalDetails.trim()) { alert("Please specify other medical conditions"); return false }
         if (formData.medication && !formData.medicationDetails.trim()) { alert("Please specify medication details"); return false }
         return true
-      case 5:
+      case 6:
         if (!formData.emergencyContactName || !formData.emergencyContactNumber) { alert("Please provide emergency contact information"); return false }
         if (!formData.waiverAccepted) { alert("Please accept the liability waiver to continue"); return false }
         if (!formData.signatureName) { alert("Please provide your signature"); return false }
@@ -242,12 +288,13 @@ export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: A
   const handlePrevious = () => { setCurrentStep(prev => Math.max(prev - 1, 1)) }
 
   const handleSubmit = async () => {
-    if (!validateStep(5)) return
+    if (!validateStep(6)) return
     setIsSubmitting(true)
     try {
       const userId = await storageService.generateUserId()
       const now = new Date().toISOString()
 
+      // Create User
       const user: User = {
         userId,
         name: formData.name,
@@ -265,6 +312,7 @@ export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: A
       }
       await storageService.addUser(user)
 
+      // Create Subscription
       const membershipType = formData.availAnnualPlan === "yes" ? "new" : "walk-in"
       const planDuration = formData.availAnnualPlan === "no"
         ? "walk-in"
@@ -277,17 +325,46 @@ export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: A
       const subscription: Subscription = {
         userId,
         startDate: parseDate(formData.startDate)!.toISOString(),
-        endDate: planDuration === "walk-in" ? new Date().toISOString() : parseDate(formData.endDate)!.toISOString(),
+        endDate: parseDate(formData.endDate)!.toISOString(),
         status: "active",
         planDuration,
         membershipType,
         coachingPreference: formData.coaching === "yes",
         paymentStatus: formData.paymentStatus,
-        paymentDate: formData.paymentStatus === "paid" ? now : undefined,
+        paymentDate: formData.paymentStatus === "paid" ? (isValidDateString(formData.paymentDate) ? parseDate(formData.paymentDate)!.toISOString() : now) : undefined,
         createdAt: now,
       }
       await storageService.addOrUpdateSubscription(subscription)
 
+      // Create Payment record if paid
+      if (formData.paymentStatus === "paid") {
+        const paymentId = await storageService.generatePaymentId()
+        
+        // Calculate total amount (payment amount + coaching amount if selected)
+        let totalAmount = parseFloat(formData.paymentAmount)
+        let paymentFor: Payment["paymentFor"] = "membership"
+        
+        if (formData.coaching === "yes" && formData.coachingAmount) {
+          totalAmount += parseFloat(formData.coachingAmount)
+          paymentFor = "both"
+        }
+        
+        const payment: Payment = {
+          paymentId,
+          userId,
+          amount: totalAmount,
+          paymentMethod: formData.paymentMethod as Payment["paymentMethod"],
+          paymentDate: isValidDateString(formData.paymentDate) ? parseDate(formData.paymentDate)!.toISOString() : now,
+          referenceNumber: formData.referenceNumber || undefined,
+          notes: formData.paymentNotes || undefined,
+          paymentFor,
+          createdAt: now,
+          updatedAt: now,
+        }
+        await storageService.addPayment(payment)
+      }
+
+      // Create Medical History
       const medicalHistory: MedicalHistory = {
         userId,
         heartProblems: formData.heartProblems,
@@ -307,6 +384,7 @@ export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: A
       }
       await storageService.addMedicalHistory(medicalHistory)
 
+      // Create Emergency Contact
       const emergencyContact: EmergencyContact = {
         userId,
         contactName: formData.emergencyContactName,
@@ -316,6 +394,7 @@ export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: A
       }
       await storageService.addEmergencyContact(emergencyContact)
 
+      // Create Liability Waiver
       const liabilityWaiver: LiabilityWaiver = {
         userId,
         signatureName: formData.signatureName,
@@ -344,8 +423,19 @@ export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: A
         isWalkIn: false,
         startDate: getTodayFormatted(),
         endDate: addMonthsToDateString(getTodayFormatted(), 1),
-        coaching: "",
+        monthlyAmount1: "",
+        monthlyAmount6: "",
+        monthlyAmount12: "",
+        dailyAmount: "",
+        walkInAmount: "",
         paymentStatus: "not paid",
+        paymentAmount: "",
+        paymentMethod: "",
+        paymentDate: getTodayFormatted(),
+        referenceNumber: "",
+        paymentNotes: "",
+        coaching: "",
+        coachingAmount: "",
         heartProblems: false,
         bloodPressureProblems: false,
         chestPain: false,
@@ -429,12 +519,12 @@ export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: A
       case 2:
         return (
           <div className="space-y-4">
-            <h3 className="font-semibold text-lg">Membership Details</h3>
+            <h3 className="font-semibold text-lg">Membership Type & Amount</h3>
             <div className="space-y-3">
               <Label>A. Avail annual membership plan? *</Label>
               <RadioGroup value={formData.availAnnualPlan} onValueChange={(value) => setFormData({ ...formData, availAnnualPlan: value, membershipCategory: "", isWalkIn: value === "no" })}>
                 <div className="flex items-center space-x-2"><RadioGroupItem value="yes" id="annual-yes" /><Label htmlFor="annual-yes">Yes</Label></div>
-                <div className="flex items-center space-x-2"><RadioGroupItem value="no" id="annual-no" /><Label htmlFor="annual-no">No</Label></div>
+                <div className="flex items-center space-x-2"><RadioGroupItem value="no" id="annual-no" /><Label htmlFor="annual-no">No (Walk-in)</Label></div>
               </RadioGroup>
             </div>
 
@@ -451,21 +541,63 @@ export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: A
                 {formData.membershipCategory === "monthly" && (
                   <>
                     <div className="space-y-2">
-                      <Label>Subscription Plan</Label>
+                      <Label>Subscription Plan *</Label>
                       <Select value={formData.subscriptionPlan} onValueChange={(v) => setFormData({ ...formData, subscriptionPlan: v })}>
                         <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>
-                          {subscriptionPlans.map((p) => (
-                            <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>
-                          ))}
+                          <SelectItem value="1">1 Month</SelectItem>
+                          <SelectItem value="6">6 Months</SelectItem>
+                          <SelectItem value="12">1 Year</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
+
+                    {/* Show only the input for the selected plan */}
+                    {formData.subscriptionPlan === "1" && (
+                      <div className="space-y-2">
+                        <Label>1 Month Amount (₱) *</Label>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          value={formData.monthlyAmount1}
+                          onChange={(e) => setFormData({ ...formData, monthlyAmount1: e.target.value })}
+                          placeholder="Enter amount for 1 month"
+                        />
+                      </div>
+                    )}
+
+                    {formData.subscriptionPlan === "6" && (
+                      <div className="space-y-2">
+                        <Label>6 Months Amount (₱) *</Label>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          value={formData.monthlyAmount6}
+                          onChange={(e) => setFormData({ ...formData, monthlyAmount6: e.target.value })}
+                          placeholder="Enter amount for 6 months"
+                        />
+                      </div>
+                    )}
+
+                    {formData.subscriptionPlan === "12" && (
+                      <div className="space-y-2">
+                        <Label>1 Year Amount (₱) *</Label>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          value={formData.monthlyAmount12}
+                          onChange={(e) => setFormData({ ...formData, monthlyAmount12: e.target.value })}
+                          placeholder="Enter amount for 1 year"
+                        />
+                      </div>
+                    )}
+
                     <div className="grid grid-cols-2 gap-4">
                       <DateInput
-                        label="Start Date"
+                        label="Start Date *"
                         value={formData.startDate}
                         onChange={(value) => setFormData({ ...formData, startDate: value })}
+                        required
                       />
                       <DateInput
                         label="End Date"
@@ -478,17 +610,30 @@ export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: A
                 )}
 
                 {formData.membershipCategory === "daily" && (
-                  <div className="grid grid-cols-2 gap-4">
-                    <DateInput
-                      label="Start Date"
-                      value={formData.startDate}
-                      onChange={(value) => setFormData({ ...formData, startDate: value })}
-                    />
+                  <>
                     <div className="space-y-2">
-                      <Label>Expires</Label>
-                      <Input value="12:00 AM (Next Day)" disabled />
+                      <Label>Daily Amount (₱) *</Label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={formData.dailyAmount}
+                        onChange={(e) => setFormData({ ...formData, dailyAmount: e.target.value })}
+                        placeholder="Enter daily amount"
+                      />
                     </div>
-                  </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <DateInput
+                        label="Start Date *"
+                        value={formData.startDate}
+                        onChange={(value) => setFormData({ ...formData, startDate: value })}
+                        required
+                      />
+                      <div className="space-y-2">
+                        <Label>Expires</Label>
+                        <Input value="12:00 AM (Next Day)" disabled />
+                      </div>
+                    </div>
+                  </>
                 )}
               </>
             )}
@@ -496,17 +641,28 @@ export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: A
             {formData.availAnnualPlan === "no" && (
               <div className="space-y-3 p-4 border rounded-lg bg-muted/30">
                 <Label className="text-base font-semibold">B. Walk-in Only</Label>
-                <p className="text-sm text-muted-foreground">Custom start and end dates</p>
+                <div className="space-y-2">
+                  <Label>Walk-in Amount (₱) *</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    value={formData.walkInAmount}
+                    onChange={(e) => setFormData({ ...formData, walkInAmount: e.target.value })}
+                    placeholder="Enter walk-in amount"
+                  />
+                </div>
                 <div className="grid grid-cols-2 gap-4 mt-3">
                   <DateInput
-                    label="Start Date"
+                    label="Start Date *"
                     value={formData.startDate}
                     onChange={(value) => setFormData({ ...formData, startDate: value })}
+                    required
                   />
                   <DateInput
-                    label="End Date"
+                    label="End Date *"
                     value={formData.endDate}
                     onChange={(value) => setFormData({ ...formData, endDate: value })}
+                    required
                   />
                 </div>
               </div>
@@ -516,24 +672,134 @@ export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: A
       case 3:
         return (
           <div className="space-y-4">
-            <h3 className="font-semibold text-lg">Coaching & Payment</h3>
-            <div className="space-y-3">
-              <Label>Avail 1 on 1 Coaching? *</Label>
-              <RadioGroup value={formData.coaching} onValueChange={(value) => setFormData({ ...formData, coaching: value })}>
-                <div className="flex items-center space-x-2"><RadioGroupItem value="yes" id="coaching-yes" /><Label htmlFor="coaching-yes">Yes</Label></div>
-                <div className="flex items-center space-x-2"><RadioGroupItem value="no" id="coaching-no" /><Label htmlFor="coaching-no">No</Label></div>
-              </RadioGroup>
-            </div>
+            <h3 className="font-semibold text-lg">Payment Details</h3>
+            
             <div className="space-y-3">
               <Label>Payment Status *</Label>
               <RadioGroup value={formData.paymentStatus} onValueChange={(value) => setFormData({ ...formData, paymentStatus: value })}>
-                <div className="flex items-center space-x-2"><RadioGroupItem value="paid" id="payment-paid" /><Label htmlFor="payment-paid">Paid</Label></div>
-                <div className="flex items-center space-x-2"><RadioGroupItem value="not paid" id="payment-not-paid" /><Label htmlFor="payment-not-paid">Not Paid</Label></div>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="paid" id="payment-paid" />
+                  <Label htmlFor="payment-paid">Paid</Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="not paid" id="payment-not-paid" />
+                  <Label htmlFor="payment-not-paid">Not Paid</Label>
+                </div>
               </RadioGroup>
             </div>
+
+            {formData.paymentStatus === "paid" && (
+              <>
+                <div className="space-y-2">
+                  <Label>Payment Amount (₱) *</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    value={formData.paymentAmount}
+                    onChange={(e) => setFormData({ ...formData, paymentAmount: e.target.value })}
+                    placeholder="Enter payment amount"
+                    required
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Payment Method *</Label>
+                  <Select value={formData.paymentMethod} onValueChange={(v) => setFormData({ ...formData, paymentMethod: v })}>
+                    <SelectTrigger><SelectValue placeholder="Select payment method" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="cash">Cash</SelectItem>
+                      <SelectItem value="gcash">GCash</SelectItem>
+                      <SelectItem value="paymaya">PayMaya</SelectItem>
+                      <SelectItem value="banktransfer">Bank Transfer</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <DateInput
+                  label="Payment Date *"
+                  value={formData.paymentDate}
+                  onChange={(value) => setFormData({ ...formData, paymentDate: value })}
+                  required
+                />
+
+                {formData.paymentMethod !== "cash" && (
+                  <div className="space-y-2">
+                    <Label>Reference Number</Label>
+                    <Input
+                      value={formData.referenceNumber}
+                      onChange={(e) => setFormData({ ...formData, referenceNumber: e.target.value })}
+                      placeholder="Transaction/reference number"
+                    />
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  <Label>Payment Notes</Label>
+                  <Textarea
+                    value={formData.paymentNotes}
+                    onChange={(e) => setFormData({ ...formData, paymentNotes: e.target.value })}
+                    placeholder="Additional notes about the payment (optional)"
+                    rows={3}
+                  />
+                </div>
+              </>
+            )}
           </div>
         )
       case 4:
+        return (
+          <div className="space-y-4">
+            <h3 className="font-semibold text-lg">Coaching Preference</h3>
+            <div className="space-y-3">
+              <Label>Avail 1-on-1 Coaching? *</Label>
+              <RadioGroup value={formData.coaching} onValueChange={(value) => setFormData({ ...formData, coaching: value })}>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="yes" id="coaching-yes" />
+                  <Label htmlFor="coaching-yes">Yes</Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="no" id="coaching-no" />
+                  <Label htmlFor="coaching-no">No</Label>
+                </div>
+              </RadioGroup>
+            </div>
+
+            {formData.coaching === "yes" && (
+              <div className="space-y-2">
+                <Label>Coaching Amount (₱) *</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={formData.coachingAmount}
+                  onChange={(e) => setFormData({ ...formData, coachingAmount: e.target.value })}
+                  placeholder="Enter coaching amount"
+                  required
+                />
+              </div>
+            )}
+
+            {formData.coaching === "yes" && formData.paymentStatus === "paid" && formData.paymentAmount && formData.coachingAmount && (
+              <div className="p-4 bg-green-50 border border-green-200 rounded-lg space-y-2">
+                <h4 className="font-semibold text-green-900">Total Payment Summary</h4>
+                <div className="space-y-1 text-sm">
+                  <div className="flex justify-between">
+                    <span>Membership Payment</span>
+                    <span>₱{parseFloat(formData.paymentAmount).toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>1-on-1 Coaching</span>
+                    <span>₱{parseFloat(formData.coachingAmount).toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between font-bold text-base pt-2 border-t border-green-300">
+                    <span>Total Amount</span>
+                    <span>₱{(parseFloat(formData.paymentAmount) + parseFloat(formData.coachingAmount)).toLocaleString()}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )
+      case 5:
         return (
           <div className="space-y-4">
             <h3 className="font-semibold text-lg">Medical History</h3>
@@ -646,7 +912,7 @@ export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: A
             </div>
           </div>
         )
-      case 5:
+      case 6:
         return (
           <div className="space-y-4">
             <h3 className="font-semibold text-lg">Liability Waiver</h3>

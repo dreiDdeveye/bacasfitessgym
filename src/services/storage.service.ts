@@ -9,6 +9,7 @@ import type {
   MedicalHistory,
   EmergencyContact,
   LiabilityWaiver,
+  Payment,
 } from "@/src/types"
 import { supabase } from "./supabase"
 import { offlineCache } from "./offline-cache.service"
@@ -855,6 +856,149 @@ export async function getUserIdCounter(): Promise<{ id: number; lastNumber: numb
 
 //
 // ==============================
+// PAYMENTS
+// ==============================
+//
+
+export async function generatePaymentId(): Promise<string> {
+  const prefix = 'PAY'
+  const timestamp = Date.now().toString(36).toUpperCase()
+  const random = Math.random().toString(36).substring(2, 8).toUpperCase()
+  return `${prefix}-${timestamp}-${random}`
+}
+
+export async function getPayments(): Promise<Payment[]> {
+  const { data, error } = await supabase
+    .from("payment")
+    .select("*")
+    .order("created_at", { ascending: false })
+
+  if (error || !data) return []
+
+  return data.map((p) => ({
+    paymentId: p.payment_id,
+    userId: p.user_id,
+    amount: p.amount,
+    paymentMethod: p.payment_method,
+    paymentDate: p.payment_date,
+    referenceNumber: p.reference_number,
+    notes: p.notes,
+    paymentFor: p.payment_for,
+    createdAt: p.created_at,
+    updatedAt: p.updated_at,
+  }))
+}
+
+export async function getPaymentsByUserId(userId: string): Promise<Payment[]> {
+  const { data, error } = await supabase
+    .from("payment")
+    .select("*")
+    .eq("user_id", userId)
+    .order("payment_date", { ascending: false })
+
+  if (error || !data) return []
+
+  return data.map((p) => ({
+    paymentId: p.payment_id,
+    userId: p.user_id,
+    amount: p.amount,
+    paymentMethod: p.payment_method,
+    paymentDate: p.payment_date,
+    referenceNumber: p.reference_number,
+    notes: p.notes,
+    paymentFor: p.payment_for,
+    createdAt: p.created_at,
+    updatedAt: p.updated_at,
+  }))
+}
+
+export async function getPaymentById(paymentId: string): Promise<Payment | null> {
+  const { data, error } = await supabase
+    .from("payment")
+    .select("*")
+    .eq("payment_id", paymentId)
+    .maybeSingle()
+
+  if (error || !data) return null
+
+  return {
+    paymentId: data.payment_id,
+    userId: data.user_id,
+    amount: data.amount,
+    paymentMethod: data.payment_method,
+    paymentDate: data.payment_date,
+    referenceNumber: data.reference_number,
+    notes: data.notes,
+    paymentFor: data.payment_for,
+    createdAt: data.created_at,
+    updatedAt: data.updated_at,
+  }
+}
+
+export async function addPayment(payment: Payment): Promise<void> {
+  const insertData = {
+    payment_id: payment.paymentId,
+    user_id: payment.userId,
+    amount: payment.amount,
+    payment_method: payment.paymentMethod,
+    payment_date: payment.paymentDate,
+    reference_number: payment.referenceNumber || null,
+    notes: payment.notes || null,
+    payment_for: payment.paymentFor,
+    created_at: payment.createdAt,
+    updated_at: payment.updatedAt,
+  }
+
+  console.log("Inserting payment:", insertData)
+
+  const { data, error } = await supabase
+    .from("payment")
+    .insert([insertData])
+    .select()
+
+  if (error) {
+    console.error("Error adding payment:", JSON.stringify(error, null, 2))
+    console.error("Error details:", error)
+    throw new Error(`Payment insert failed: ${error.message || JSON.stringify(error)}`)
+  }
+
+  console.log("Payment created successfully:", data)
+}
+
+export async function updatePayment(
+  paymentId: string,
+  updates: Partial<Payment>,
+): Promise<void> {
+  const updateData: Record<string, unknown> = {
+    updated_at: new Date().toISOString(),
+  }
+
+  if (updates.amount !== undefined) updateData.amount = updates.amount
+  if (updates.paymentMethod !== undefined) updateData.payment_method = updates.paymentMethod
+  if (updates.paymentDate !== undefined) updateData.payment_date = updates.paymentDate
+  if (updates.referenceNumber !== undefined) updateData.reference_number = updates.referenceNumber || null
+  if (updates.notes !== undefined) updateData.notes = updates.notes || null
+  if (updates.paymentFor !== undefined) updateData.payment_for = updates.paymentFor
+
+  const { error } = await supabase
+    .from("payment")
+    .update(updateData)
+    .eq("payment_id", paymentId)
+
+  if (error) console.error("Error updating payment:", error)
+}
+
+export async function deletePayment(paymentId: string): Promise<void> {
+  const { error } = await supabase
+    .from("payment")
+    .delete()
+    .eq("payment_id", paymentId)
+
+  if (error) console.error("Error deleting payment:", error)
+}
+
+//
+// ==============================
 // EXPORT
 // ==============================
 //
@@ -893,6 +1037,13 @@ export const storageService = {
   getAllEmergencyContacts,
   getAllLiabilityWaivers,
   getUserIdCounter,
+  generatePaymentId,
+  getPayments,
+  getPaymentsByUserId,
+  getPaymentById,
+  addPayment,
+  updatePayment,
+  deletePayment,
 }
 
 export * as storage from "./storage.service"

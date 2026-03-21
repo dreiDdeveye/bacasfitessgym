@@ -39,6 +39,19 @@ export interface SubscriptionHistory {
   updatedAt: string
 }
 
+export interface Payment {
+  paymentId: string
+  userId: string
+  amount: number
+  paymentMethod: 'cash' | 'gcash' | 'paymaya' | 'banktransfer'
+  paymentDate: string
+  referenceNumber?: string
+  notes?: string
+  paymentFor: 'membership' | 'coaching' | 'both' | 'other'
+  createdAt: string
+  updatedAt: string
+}
+
 export interface MedicalHistory {
   userId: string
   heartProblems: boolean
