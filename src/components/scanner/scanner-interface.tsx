@@ -3,15 +3,11 @@
 import { useState, useEffect, useRef } from "react"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogDescription,
-  DialogFooter,
 } from "@/components/ui/dialog"
 import {
   Select,
@@ -21,7 +17,6 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import {
   ScanLine,
   Search,
@@ -35,26 +30,19 @@ import {
   WifiOff,
   ShieldAlert,
   CloudOff,
-  RefreshCw,
-  CreditCard,
-  CheckCircle2,
-  DollarSign,
 } from "lucide-react"
 import { useQRScanner } from "@/src/hooks/use-qr-scanner"
 import { accessService } from "@/src/services/access.service"
 import { storageService } from "@/src/services/storage.service"
 import { subscriptionService } from "@/src/services/subscription.service"
 import { offlineQueue } from "@/src/services/offline-queue.service"
-import type { ScanLog, Subscription, User as UserType, Payment } from "@/src/types"
+import type { ScanLog, Subscription, User as UserType } from "@/src/types"
 import { playLongBeep, speakCheckIn, speakCheckOut, speakExpired } from "@/src/lib/sound"
 import {
   startOfDay,
   startOfWeek,
   startOfMonth,
   startOfYear,
-  addDays,
-  addMonths,
-  addHours,
 } from "date-fns"
 
 const SCAN_COOLDOWN_SECONDS = 60
@@ -93,14 +81,6 @@ type HoursView = "today" | "week" | "month" | "year" | "all"
 type StatusFilter = "all" | "active" | "expired"
 type MembershipFilter = "all" | "monthly" | "daily" | "walkin"
 
-type SubscriptionTypeOption = {
-  id: string
-  label: string
-  duration: number
-  unit: "day" | "month" | "hour"
-  suggestedPrice?: string
-}
-
 export function ScannerInterface() {
   const [lastScan, setLastScan] = useState<ScanResult | null>(null)
   const [duplicateScan, setDuplicateScan] = useState<DuplicateScan | null>(null)
@@ -121,25 +101,6 @@ export function ScannerInterface() {
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date())
   const [isOnline, setIsOnline] = useState(typeof navigator !== "undefined" ? navigator.onLine : true)
   const [pendingSyncCount, setPendingSyncCount] = useState(0)
-  
-  // Renewal feature states
-  const [showRenewalDialog, setShowRenewalDialog] = useState(false)
-  const [renewalUser, setRenewalUser] = useState<UserType | null>(null)
-  const [selectedSubType, setSelectedSubType] = useState<string>("")
-  const [amount, setAmount] = useState<string>("")
-  const [isPaid, setIsPaid] = useState(false)
-  const [paymentMethod, setPaymentMethod] = useState<"cash" | "gcash" | "paymaya" | "banktransfer">("cash")
-  const [isProcessingRenewal, setIsProcessingRenewal] = useState(false)
-
-  // Subscription type options
-  const subscriptionTypes: SubscriptionTypeOption[] = [
-    { id: "daily", label: "Daily Pass", duration: 1, unit: "day", suggestedPrice: "100" },
-    { id: "monthly-1", label: "1 Month", duration: 1, unit: "month", suggestedPrice: "1500" },
-    { id: "monthly-6", label: "6 Months", duration: 6, unit: "month", suggestedPrice: "8000" },
-    { id: "monthly-12", label: "12 Months (1 Year)", duration: 12, unit: "month", suggestedPrice: "15000" },
-    { id: "walkin-4h", label: "Walk-in 4 Hours", duration: 4, unit: "hour", suggestedPrice: "80" },
-    { id: "walkin-8h", label: "Walk-in 8 Hours", duration: 8, unit: "hour", suggestedPrice: "150" },
-  ]
 
   const formatDate = (date?: string) => {
     if (!date) return "—"
@@ -278,124 +239,6 @@ export function ScannerInterface() {
     }
   }
 
-  const handleRenewal = (user: UserType) => {
-    setRenewalUser(user)
-    setSelectedSubType("")
-    setAmount("")
-    setIsPaid(false)
-    setPaymentMethod("cash")
-    setShowRenewalDialog(true)
-  }
-
-  const processRenewal = async () => {
-    if (!renewalUser || !selectedSubType || !amount) {
-      alert("Please select a subscription plan and enter an amount")
-      return
-    }
-
-    // Validate amount
-    const numAmount = parseFloat(amount)
-    if (isNaN(numAmount) || numAmount <= 0) {
-      alert("Please enter a valid amount greater than 0")
-      return
-    }
-
-    setIsProcessingRenewal(true)
-
-    try {
-      const subTypeOption = subscriptionTypes.find(st => st.id === selectedSubType)
-      if (!subTypeOption) throw new Error("Invalid subscription type")
-
-      const now = new Date()
-      let endDate: Date
-
-      // Calculate end date based on subscription type
-      switch (subTypeOption.unit) {
-        case "hour":
-          endDate = addHours(now, subTypeOption.duration)
-          break
-        case "day":
-          endDate = addDays(now, subTypeOption.duration)
-          // For daily pass, set to end of day
-          endDate.setHours(23, 59, 59, 999)
-          break
-        case "month":
-          endDate = addMonths(now, subTypeOption.duration)
-          break
-      }
-
-      // Determine membership type and plan duration
-      let membershipType: "monthly" | "daily" | "walkin" = "walkin"
-      let planDuration: string | undefined
-
-      if (subTypeOption.unit === "day") {
-        membershipType = "daily"
-        planDuration = "1 day"
-      } else if (subTypeOption.unit === "month") {
-        membershipType = "monthly"
-        planDuration = `${subTypeOption.duration} month${subTypeOption.duration > 1 ? "s" : ""}`
-      } else if (subTypeOption.unit === "hour") {
-        membershipType = "walkin"
-        planDuration = `${subTypeOption.duration} hours`
-      }
-
-      // Create new subscription with ACTIVE status
-      const newSubscription: Subscription = {
-        userId: renewalUser.userId,
-        startDate: now.toISOString(),
-        endDate: endDate.toISOString(),
-        status: "active", // Automatically activate
-        planDuration: planDuration,
-        membershipType: membershipType,
-        coachingPreference: false,
-        paymentStatus: isPaid ? "paid" : "not paid",
-        paymentDate: isPaid ? now.toISOString() : undefined,
-        createdAt: now.toISOString(),
-      }
-
-      // Save subscription using the correct method
-      await storageService.addOrUpdateSubscription(newSubscription)
-
-      // Create payment record if marked as paid
-      if (isPaid) {
-        const paymentId = await storageService.generatePaymentId()
-        
-        const payment: Payment = {
-          paymentId: paymentId,
-          userId: renewalUser.userId,
-          amount: numAmount,
-          paymentMethod: paymentMethod,
-          paymentDate: now.toISOString(),
-          paymentFor: "membership",
-          createdAt: now.toISOString(),
-          updatedAt: now.toISOString(),
-        }
-
-        await storageService.addPayment(payment)
-      }
-
-      // Update stats
-      await updateStats()
-
-      // Close dialog
-      setShowRenewalDialog(false)
-      setLastScan(null)
-
-      // Show success message
-      const paymentInfo = isPaid 
-        ? `\n\nPayment Details:\n• Amount: ₱${numAmount.toFixed(2)}\n• Method: ${paymentMethod.toUpperCase()}\n• Status: PAID ✓`
-        : '\n\nPayment Status: UNPAID ✗'
-
-      alert(`✅ Renewal Successful!\n\nMember: ${renewalUser.name}\nPlan: ${subTypeOption.label}\nValid Until: ${formatDate(endDate.toISOString())}\nStatus: ACTIVE ✓${paymentInfo}`)
-
-    } catch (error) {
-      console.error("Renewal error:", error)
-      alert("❌ Failed to process renewal. Please try again.\n\nError: " + (error instanceof Error ? error.message : "Unknown error"))
-    } finally {
-      setIsProcessingRenewal(false)
-    }
-  }
-
   const handleScan = async (code: string) => {
     const userId = code.trim()
 
@@ -457,18 +300,8 @@ export function ScannerInterface() {
     return () => window.removeEventListener("click", enterFullscreen)
   }, [])
 
-  useEffect(() => { if (!lastScan) return; const t = setTimeout(() => setLastScan(null), 8000); return () => clearTimeout(t) }, [lastScan])
+  useEffect(() => { if (!lastScan) return; const t = setTimeout(() => setLastScan(null), 5000); return () => clearTimeout(t) }, [lastScan])
   useEffect(() => { if (!duplicateScan) return; const t = setTimeout(() => setDuplicateScan(null), 3000); return () => clearTimeout(t) }, [duplicateScan])
-
-  // Auto-fill suggested price when subscription type is selected
-  useEffect(() => {
-    if (selectedSubType) {
-      const subType = subscriptionTypes.find(st => st.id === selectedSubType)
-      if (subType?.suggestedPrice) {
-        setAmount(subType.suggestedPrice)
-      }
-    }
-  }, [selectedSubType])
 
   // Network detection + offline sync
   useEffect(() => {
@@ -484,6 +317,7 @@ export function ScannerInterface() {
     window.addEventListener("online", handleOnline)
     window.addEventListener("offline", handleOffline)
 
+    // Check for pending items on load and try to flush
     setPendingSyncCount(offlineQueue.getPendingCount())
     if (navigator.onLine && offlineQueue.getPendingCount() > 0) {
       offlineQueue.flushQueue().then(() => {
@@ -605,7 +439,6 @@ export function ScannerInterface() {
         <p className="text-muted-foreground mt-2 text-sm md:text-base">Present QR Code to Scanner</p>
       </Card>
 
-      {/* MEMBERS DIALOG - keeping original code */}
       <Dialog open={showMembersDialog} onOpenChange={setShowMembersDialog}>
         <DialogContent className="max-w-4xl max-h-[85vh] overflow-hidden flex flex-col w-[95vw] md:w-auto">
           <DialogHeader>
@@ -706,199 +539,6 @@ export function ScannerInterface() {
         </DialogContent>
       </Dialog>
 
-      {/* RENEWAL DIALOG - SIMPLIFIED */}
-      <Dialog open={showRenewalDialog} onOpenChange={setShowRenewalDialog}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <RefreshCw className="w-5 h-5 text-primary" />
-              Renew Membership
-            </DialogTitle>
-            <DialogDescription>
-              Select a subscription plan and enter payment details for {renewalUser?.name}
-            </DialogDescription>
-          </DialogHeader>
-          
-          <div className="space-y-6 py-4">
-            {/* User Info */}
-            <div className="p-4 bg-muted rounded-lg">
-              <p className="font-semibold text-lg">{renewalUser?.name}</p>
-              <p className="text-sm text-muted-foreground">ID: {renewalUser?.userId}</p>
-            </div>
-
-            {/* Subscription Type Selection */}
-            <div className="space-y-3">
-              <Label className="text-base font-semibold">Select Subscription Plan</Label>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {subscriptionTypes.map((subType) => (
-                  <Card
-                    key={subType.id}
-                    className={`p-4 cursor-pointer transition-all hover:border-primary ${
-                      selectedSubType === subType.id ? "border-primary border-2 bg-primary/5" : ""
-                    }`}
-                    onClick={() => setSelectedSubType(subType.id)}
-                  >
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <p className="font-semibold">{subType.label}</p>
-                        <p className="text-sm text-muted-foreground mt-1">
-                          {subType.duration} {subType.unit}{subType.duration > 1 ? "s" : ""}
-                        </p>
-                        {subType.suggestedPrice && (
-                          <p className="text-xs text-muted-foreground mt-1">
-                            Suggested: ₱{subType.suggestedPrice}
-                          </p>
-                        )}
-                      </div>
-                      {selectedSubType === subType.id && (
-                        <CheckCircle2 className="w-5 h-5 text-primary shrink-0" />
-                      )}
-                    </div>
-                  </Card>
-                ))}
-              </div>
-            </div>
-
-            {/* Amount Input */}
-            <div className="space-y-2">
-              <Label htmlFor="amount" className="text-base font-semibold">
-                <DollarSign className="w-4 h-4 inline mr-1" />
-                Amount (₱)
-              </Label>
-              <Input
-                id="amount"
-                type="number"
-                placeholder="Enter amount"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                min="0"
-                step="0.01"
-                className="text-lg"
-              />
-              <p className="text-xs text-muted-foreground">
-                Enter the actual amount being charged
-              </p>
-            </div>
-
-            {/* Payment Status Toggle */}
-            <div className="space-y-3">
-              <Label className="text-base font-semibold">Payment Status</Label>
-              <Card className="p-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <CreditCard className="w-5 h-5 text-muted-foreground" />
-                    <div>
-                      <p className="font-medium">Mark as Paid</p>
-                      <p className="text-sm text-muted-foreground">
-                        Has the customer completed payment?
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <Label 
-                      htmlFor="payment-status" 
-                      className={`font-semibold ${isPaid ? "text-emerald-600" : "text-red-600"}`}
-                    >
-                      {isPaid ? "PAID" : "UNPAID"}
-                    </Label>
-                    <Checkbox
-                      id="payment-status"
-                      checked={isPaid}
-                      onCheckedChange={(checked) => setIsPaid(checked as boolean)}
-                      className="w-6 h-6"
-                    />
-                  </div>
-                </div>
-              </Card>
-            </div>
-
-            {/* Payment Method (only shown if paid) */}
-            {isPaid && (
-              <div className="space-y-3 p-4 border rounded-lg bg-emerald-50/10">
-                <h3 className="font-semibold text-emerald-700">Payment Method</h3>
-                <Select value={paymentMethod} onValueChange={(v) => setPaymentMethod(v as typeof paymentMethod)}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="cash">Cash</SelectItem>
-                    <SelectItem value="gcash">GCash</SelectItem>
-                    <SelectItem value="paymaya">PayMaya</SelectItem>
-                    <SelectItem value="banktransfer">Bank Transfer</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-
-            {/* Summary */}
-            {selectedSubType && amount && (
-              <Card className="p-4 bg-primary/5 border-primary">
-                <p className="font-semibold mb-3">Renewal Summary</p>
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Member:</span>
-                    <span className="font-medium">{renewalUser?.name}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Plan:</span>
-                    <span className="font-medium">
-                      {subscriptionTypes.find(st => st.id === selectedSubType)?.label}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Amount:</span>
-                    <span className="font-medium text-lg">₱{parseFloat(amount || "0").toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between pt-2 border-t">
-                    <span className="text-muted-foreground">Payment Status:</span>
-                    <span className={`font-semibold ${isPaid ? "text-emerald-600" : "text-red-600"}`}>
-                      {isPaid ? "PAID ✓" : "UNPAID ✗"}
-                    </span>
-                  </div>
-                  {isPaid && (
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Method:</span>
-                      <span className="font-medium">{paymentMethod.toUpperCase()}</span>
-                    </div>
-                  )}
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">QR Status:</span>
-                    <span className="font-semibold text-emerald-600">WILL BE ACTIVATED ✓</span>
-                  </div>
-                </div>
-              </Card>
-            )}
-          </div>
-
-          <DialogFooter className="gap-2">
-            <Button 
-              variant="outline" 
-              onClick={() => setShowRenewalDialog(false)} 
-              disabled={isProcessingRenewal}
-            >
-              Cancel
-            </Button>
-            <Button 
-              onClick={processRenewal} 
-              disabled={!selectedSubType || !amount || parseFloat(amount || "0") <= 0 || isProcessingRenewal}
-              className="gap-2"
-            >
-              {isProcessingRenewal ? (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                  Processing...
-                </>
-              ) : (
-                <>
-                  <CheckCircle2 className="w-4 h-4" />
-                  Confirm Renewal
-                </>
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       {/* DUPLICATE SCAN POPUP */}
       {duplicateScan && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm p-4">
@@ -928,13 +568,13 @@ export function ScannerInterface() {
           <Card className="w-full max-w-xl p-5 md:p-8 bg-white rounded-xl shadow-2xl border">
             <div className="flex gap-4 md:gap-6">
               <div className="flex-1 min-w-0">
-                <h2 className={`text-2xl md:text-3xl font-bold ${lastScan.success ? "text-emerald-600" : "text-red-600"}`}>
+                <h2 className={`text-2xl md:text-3xl font-bold ${lastScan.success ? "text-gold-600" : "text-black-600"}`}>
                   {lastScan.message}
                 </h2>
-                <p className="text-base md:text-lg font-bold mt-1 truncate text-gray-900">
+                <p className="text-base md:text-lg font-bold mt-1 truncate">
                   {lastScan.user?.name || lastScan.log?.userName || "Unknown User"}
                 </p>
-                <p className="text-xs md:text-sm text-gray-600 truncate">ID: {lastScan.log?.userId}</p>
+                <p className="text-xs md:text-sm text-white-600 truncate">ID: {lastScan.log?.userId}</p>
                 <div className="mt-2">
                   {lastScan.subscription && getMembershipBadge(getMembershipType(lastScan.subscription))}
                 </div>
@@ -942,23 +582,9 @@ export function ScannerInterface() {
                   {(() => {
                     const status = getExpiryStatus(lastScan.subscription)
                     const days   = getRemainingDays(lastScan.subscription)
-                    if (status === "expired") return (
-                      <div className="space-y-3">
-                        <Badge variant="destructive" className="text-base px-3 py-1">🔴 Expired</Badge>
-                        {lastScan.user && (
-                          <Button 
-                            onClick={() => handleRenewal(lastScan.user!)} 
-                            className="w-full gap-2"
-                            size="lg"
-                          >
-                            <RefreshCw className="w-4 h-4" />
-                            Renew Membership
-                          </Button>
-                        )}
-                      </div>
-                    )
-                    if (status === "soon") return <Badge className="bg-yellow-400 text-black text-base px-3 py-1">🟡 Expiring Soon ({days} days)</Badge>
-                    return <Badge className="bg-green-600 text-white text-base px-3 py-1">🟢 Active — Expires {formatDate(lastScan.subscription?.endDate)}</Badge>
+                    if (status === "expired") return <Badge variant="destructive">🔴 Expired</Badge>
+                    if (status === "soon") return <Badge className="bg-yellow-400 text-black">🟡 Expiring Soon ({days} days)</Badge>
+                    return <Badge className="bg-green-600">🟢 Active — Expires {formatDate(lastScan.subscription?.endDate)}</Badge>
                   })()}
                 </div>
               </div>
