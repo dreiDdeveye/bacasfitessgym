@@ -40,10 +40,32 @@ function parseDate(dateStr: string): Date | null {
   if (month < 1 || month > 12) return null
   if (day < 1 || day > 31) return null
   if (year < 1900 || year > 2100) return null
-  const date = new Date(year, month - 1, day)
-  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
-    return null
-  }
+  
+  // Create date in UTC, then subtract 8 hours for PH timezone (UTC+8)
+  const date = new Date(Date.UTC(year, month - 1, day, 0, 0, 0))
+  date.setUTCHours(date.getUTCHours() - 8)
+  
+  if (isNaN(date.getTime())) return null
+  return date
+}
+
+function parseDateEndOfDay(dateStr: string): Date | null {
+  if (!dateStr) return null
+  const parts = dateStr.split("/")
+  if (parts.length !== 3) return null
+  const day = parseInt(parts[0], 10)
+  const month = parseInt(parts[1], 10)
+  const year = parseInt(parts[2], 10)
+  if (isNaN(day) || isNaN(month) || isNaN(year)) return null
+  if (month < 1 || month > 12) return null
+  if (day < 1 || day > 31) return null
+  if (year < 1900 || year > 2100) return null
+  
+  // Create date at end of day (23:59:59) in PH timezone
+  const date = new Date(Date.UTC(year, month - 1, day, 23, 59, 59))
+  date.setUTCHours(date.getUTCHours() - 8)
+  
+  if (isNaN(date.getTime())) return null
   return date
 }
 
@@ -148,22 +170,18 @@ export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: A
     isWalkIn: false,
     startDate: getTodayFormatted(),
     endDate: addMonthsToDateString(getTodayFormatted(), 1),
-    // Amount inputs for each membership type
-    monthlyAmount1: "",   // 1 month
-    monthlyAmount6: "",   // 6 months
-    monthlyAmount12: "",  // 1 year
-    dailyAmount: "",      // daily pass
-    walkInAmount: "",     // walk-in
-    // Payment fields (now in step 3)
+    monthlyAmount1: "",
+    monthlyAmount6: "",
+    monthlyAmount12: "",
+    dailyAmount: "",
+    walkInAmount: "",
     paymentStatus: "not paid",
-    paymentAmount: "",    // Manual payment input
+    paymentAmount: "",
     paymentMethod: "",
     paymentDate: getTodayFormatted(),
-    referenceNumber: "",
     paymentNotes: "",
-    // Coaching (now in step 4)
     coaching: "",
-    coachingAmount: "",   // Manual coaching input
+    coachingAmount: "",
     heartProblems: false,
     bloodPressureProblems: false,
     chestPain: false,
@@ -182,7 +200,6 @@ export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: A
     signatureName: "",
   })
 
-  // Calculate age from birthday
   useEffect(() => {
     if (isValidDateString(formData.birthday)) {
       const birthDate = parseDate(formData.birthday)!
@@ -196,7 +213,6 @@ export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: A
     }
   }, [formData.birthday])
 
-  // Update end date for monthly subscriptions
   useEffect(() => {
     if (formData.availAnnualPlan === "yes" && formData.membershipCategory === "monthly") {
       const plan = subscriptionPlans.find(p => p.value === formData.subscriptionPlan)
@@ -207,7 +223,6 @@ export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: A
     }
   }, [formData.subscriptionPlan, formData.startDate, formData.availAnnualPlan, formData.membershipCategory])
 
-  // Update end date for daily subscriptions
   useEffect(() => {
     if (formData.availAnnualPlan === "yes" && formData.membershipCategory === "daily") {
       if (isValidDateString(formData.startDate)) {
@@ -250,7 +265,6 @@ export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: A
         if (formData.availAnnualPlan === "no" && !isValidDateString(formData.endDate)) { alert("Please enter a valid end date (dd/mm/yyyy)"); return false }
         return true
       case 3:
-        // Payment validation
         if (!formData.paymentStatus) { alert("Please select payment status"); return false }
         if (formData.paymentStatus === "paid") {
           if (!formData.paymentAmount || parseFloat(formData.paymentAmount) <= 0) {
@@ -262,7 +276,6 @@ export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: A
         }
         return true
       case 4:
-        // Coaching validation
         if (!formData.coaching) { alert("Please select coaching preference"); return false }
         if (formData.coaching === "yes") {
           if (!formData.coachingAmount || parseFloat(formData.coachingAmount) <= 0) {
@@ -294,7 +307,6 @@ export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: A
       const userId = await storageService.generateUserId()
       const now = new Date().toISOString()
 
-      // Create User
       const user: User = {
         userId,
         name: formData.name,
@@ -312,7 +324,6 @@ export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: A
       }
       await storageService.addUser(user)
 
-      // Create Subscription
       const membershipType = formData.availAnnualPlan === "yes" ? "new" : "walk-in"
       const planDuration = formData.availAnnualPlan === "no"
         ? "walk-in"
@@ -325,7 +336,9 @@ export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: A
       const subscription: Subscription = {
         userId,
         startDate: parseDate(formData.startDate)!.toISOString(),
-        endDate: parseDate(formData.endDate)!.toISOString(),
+        endDate: formData.availAnnualPlan === "no" 
+          ? parseDateEndOfDay(formData.endDate)!.toISOString()
+          : parseDate(formData.endDate)!.toISOString(),
         status: "active",
         planDuration,
         membershipType,
@@ -336,11 +349,9 @@ export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: A
       }
       await storageService.addOrUpdateSubscription(subscription)
 
-      // Create Payment record if paid
       if (formData.paymentStatus === "paid") {
         const paymentId = await storageService.generatePaymentId()
         
-        // Calculate total amount (payment amount + coaching amount if selected)
         let totalAmount = parseFloat(formData.paymentAmount)
         let paymentFor: Payment["paymentFor"] = "membership"
         
@@ -355,7 +366,6 @@ export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: A
           amount: totalAmount,
           paymentMethod: formData.paymentMethod as Payment["paymentMethod"],
           paymentDate: isValidDateString(formData.paymentDate) ? parseDate(formData.paymentDate)!.toISOString() : now,
-          referenceNumber: formData.referenceNumber || undefined,
           notes: formData.paymentNotes || undefined,
           paymentFor,
           createdAt: now,
@@ -364,7 +374,6 @@ export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: A
         await storageService.addPayment(payment)
       }
 
-      // Create Medical History
       const medicalHistory: MedicalHistory = {
         userId,
         heartProblems: formData.heartProblems,
@@ -384,7 +393,6 @@ export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: A
       }
       await storageService.addMedicalHistory(medicalHistory)
 
-      // Create Emergency Contact
       const emergencyContact: EmergencyContact = {
         userId,
         contactName: formData.emergencyContactName,
@@ -394,7 +402,6 @@ export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: A
       }
       await storageService.addEmergencyContact(emergencyContact)
 
-      // Create Liability Waiver
       const liabilityWaiver: LiabilityWaiver = {
         userId,
         signatureName: formData.signatureName,
@@ -432,7 +439,6 @@ export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: A
         paymentAmount: "",
         paymentMethod: "",
         paymentDate: getTodayFormatted(),
-        referenceNumber: "",
         paymentNotes: "",
         coaching: "",
         coachingAmount: "",
@@ -552,7 +558,6 @@ export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: A
                       </Select>
                     </div>
 
-                    {/* Show only the input for the selected plan */}
                     {formData.subscriptionPlan === "1" && (
                       <div className="space-y-2">
                         <Label>1 Month Amount (₱) *</Label>
@@ -722,17 +727,6 @@ export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: A
                   required
                 />
 
-                {formData.paymentMethod !== "cash" && (
-                  <div className="space-y-2">
-                    <Label>Reference Number</Label>
-                    <Input
-                      value={formData.referenceNumber}
-                      onChange={(e) => setFormData({ ...formData, referenceNumber: e.target.value })}
-                      placeholder="Transaction/reference number"
-                    />
-                  </div>
-                )}
-
                 <div className="space-y-2">
                   <Label>Payment Notes</Label>
                   <Textarea
@@ -779,18 +773,18 @@ export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: A
             )}
 
             {formData.coaching === "yes" && formData.paymentStatus === "paid" && formData.paymentAmount && formData.coachingAmount && (
-              <div className="p-4 bg-green-50 border border-green-200 rounded-lg space-y-2">
-                <h4 className="font-semibold text-green-900">Total Payment Summary</h4>
+              <div className="p-4 border rounded-lg bg-muted/30 space-y-2">
+                <h4 className="font-semibold text-base">Total Payment Summary</h4>
                 <div className="space-y-1 text-sm">
                   <div className="flex justify-between">
-                    <span>Membership Payment</span>
+                    <span className="text-muted-foreground">Membership Payment</span>
                     <span>₱{parseFloat(formData.paymentAmount).toLocaleString()}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>1-on-1 Coaching</span>
+                    <span className="text-muted-foreground">1-on-1 Coaching</span>
                     <span>₱{parseFloat(formData.coachingAmount).toLocaleString()}</span>
                   </div>
-                  <div className="flex justify-between font-bold text-base pt-2 border-t border-green-300">
+                  <div className="flex justify-between font-bold text-base pt-2 border-t">
                     <span>Total Amount</span>
                     <span>₱{(parseFloat(formData.paymentAmount) + parseFloat(formData.coachingAmount)).toLocaleString()}</span>
                   </div>
