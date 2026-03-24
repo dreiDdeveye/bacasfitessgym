@@ -34,7 +34,7 @@
     "**/*.tsx",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts"
-  ],
+, "src/services/realtime-backup.service.tys"  ],
   "exclude": [
     "node_modules"
   ]

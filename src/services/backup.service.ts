@@ -10,6 +10,7 @@ import {
   getAllEmergencyContacts,
   getAllLiabilityWaivers,
   getUserIdCounter,
+  getPayments,
 } from "./storage.service"
 
 interface SheetData {
@@ -91,7 +92,7 @@ export async function backupToGoogleSheets(
   onProgress?: ProgressCallback,
 ): Promise<{ success: boolean; message: string; spreadsheetUrl?: string }> {
   const scriptUrl = SCRIPT_URL
-  const totalSteps = 10
+  const totalSteps = 11  // +1 for payments
   let currentStep = 0
 
   const progress = (step: string) => {
@@ -126,6 +127,9 @@ export async function backupToGoogleSheets(
 
     progress("Fetching ID counter...")
     const idCounter = await getUserIdCounter()
+
+    progress("Fetching payments...")
+    const payments = await getPayments()
 
     const sheets: SheetData[] = [
       {
@@ -201,6 +205,31 @@ export async function backupToGoogleSheets(
         sheetName: "User ID Counter",
         headers: ["ID", "Last Number"],
         rows: idCounter ? [[idCounter.id, idCounter.lastNumber]] : [],
+      },
+      // ── Payments ──────────────────────────────────────────────────────────
+      {
+        sheetName: "Payments",
+        headers: [
+          "Payment ID", "User ID", "Member Name", "Amount", "Payment Method",
+          "Payment Date", "Payment For", "Reference Number", "Notes",
+          "Created At", "Updated At",
+        ],
+        rows: payments.map((p) => {
+          const memberName = users.find((u) => u.userId === p.userId)?.name || ""
+          return [
+            p.paymentId,
+            p.userId,
+            memberName,
+            p.amount,                      // kept as number → Apps Script formats as ₱
+            p.paymentMethod || null,
+            p.paymentDate || null,
+            p.paymentFor || null,
+            p.referenceNumber || null,
+            p.notes || null,
+            p.createdAt || null,
+            p.updatedAt || null,
+          ]
+        }),
       },
     ]
 

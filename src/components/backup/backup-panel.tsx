@@ -46,6 +46,7 @@ import {
   getAllMedicalHistories,
   getAllEmergencyContacts,
   getAllLiabilityWaivers,
+  getPayments,
 } from "@/src/services/storage.service"
 
 interface TableData {
@@ -112,7 +113,7 @@ export function BackupPanel() {
   const loadPreviewData = async () => {
     setIsLoadingData(true)
     try {
-      const [users, subs, subHistory, logs, sessions, medical, emergency, waivers] = await Promise.all([
+      const [users, subs, subHistory, logs, sessions, medical, emergency, waivers, payments] = await Promise.all([
         getUsers(),
         getSubscriptions(),
         getSubscriptionHistory(),
@@ -121,6 +122,7 @@ export function BackupPanel() {
         getAllMedicalHistories(),
         getAllEmergencyContacts(),
         getAllLiabilityWaivers(),
+        getPayments(),
       ])
 
       const data: TableData[] = [
@@ -164,6 +166,25 @@ export function BackupPanel() {
           headers: ["User ID", "Signature Name", "Signed Date", "Accepted", "Created At"],
           rows: waivers.map((w) => [w.userId, w.signatureName, w.signedDate, w.waiverAccepted, w.createdAt]),
         },
+        // ── Payments ───────────────────────────────────────────────────────
+        {
+          name: "Payments",
+          headers: ["Payment ID", "User ID", "Member Name", "Amount", "Method", "Date", "For", "Reference", "Notes"],
+          rows: payments.map((p) => {
+            const memberName = users.find((u) => u.userId === p.userId)?.name || "—"
+            return [
+              p.paymentId,
+              p.userId,
+              memberName,
+              p.amount,
+              p.paymentMethod,
+              p.paymentDate,
+              p.paymentFor,
+              p.referenceNumber || null,
+              p.notes || null,
+            ]
+          }),
+        },
       ]
 
       setTables(data)
@@ -188,6 +209,7 @@ export function BackupPanel() {
   const formatCell = (value: string | number | boolean | null | undefined) => {
     if (value === null || value === undefined || value === "") return "—"
     if (typeof value === "boolean") return value ? "Yes" : "No"
+    if (typeof value === "number") return value.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     return String(value)
   }
 
