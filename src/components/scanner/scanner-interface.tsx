@@ -1004,7 +1004,7 @@ export function ScannerInterface() {
                       Payment For <span className="text-red-500">*</span>
                     </Label>
                     <div className="grid grid-cols-2 gap-2">
-                      {(["membership", "coaching", "both", "other"] as PaymentFor[]).map(pf => (
+                      {(["membership", "coaching",] as PaymentFor[]).map(pf => (
                         <button
                           key={pf}
                           type="button"
