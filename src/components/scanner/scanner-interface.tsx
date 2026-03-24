@@ -4,8 +4,6 @@ import { useState, useEffect, useRef } from "react"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Textarea } from "@/components/ui/textarea"
-import { Label } from "@/components/ui/label"
 import {
   Dialog,
   DialogContent,
@@ -20,6 +18,8 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
 import {
   ScanLine,
   Search,
@@ -37,14 +37,13 @@ import {
   CheckCircle2,
   XCircle,
   CreditCard,
-  Receipt,
 } from "lucide-react"
 import { useQRScanner } from "@/src/hooks/use-qr-scanner"
 import { accessService } from "@/src/services/access.service"
 import { storageService } from "@/src/services/storage.service"
 import { subscriptionService } from "@/src/services/subscription.service"
 import { offlineQueue } from "@/src/services/offline-queue.service"
-import type { ScanLog, Subscription, User as UserType } from "@/src/types"
+import type { ScanLog, Subscription, User as UserType, Payment } from "@/src/types"
 import { playLongBeep, speakCheckIn, speakCheckOut, speakExpired } from "@/src/lib/sound"
 import {
   startOfDay,
@@ -56,7 +55,9 @@ import {
 
 const SCAN_COOLDOWN_SECONDS = 60
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ─── Renewal plan config ──────────────────────────────────────────────────────
+type PaymentMethod = "cash" | "gcash" | "paymaya" | "banktransfer"
+type PaymentFor    = "membership" | "coaching" | "both" | "other"
 
 type RenewalPlan = {
   id: "1m" | "6m" | "1y"
@@ -65,45 +66,32 @@ type RenewalPlan = {
 }
 
 const RENEWAL_PLANS: RenewalPlan[] = [
-  { id: "1m", label: "1 Month",  months: 1  },
-  { id: "6m", label: "6 Months", months: 6  },
-  { id: "1y", label: "1 Year",   months: 12 },
+  { id: "1m",  label: "1 Month",  months: 1  },
+  { id: "6m",  label: "6 Months", months: 6  },
+  { id: "1y",  label: "1 Year",   months: 12 },
 ]
 
-type PaymentMethod = "cash" | "gcash" | "paymaya" | "banktransfer"
-type PaymentFor    = "membership" | "coaching" | "both" | "other"
+type PlanPrices = Record<RenewalPlan["id"], string>
 
-type PaymentInput = {
-  amount: string
-  payment_method: PaymentMethod | ""
+type PaymentForm = {
+  payment_method:   PaymentMethod | ""
+  payment_for:      PaymentFor | ""
   reference_number: string
-  notes: string
-  payment_for: PaymentFor | ""
-}
-
-/** Matches the public.payment table schema exactly */
-export type PaymentRecord = {
-  payment_id: string
-  user_id: string
-  amount: number
-  payment_method: PaymentMethod
-  payment_date: string          // ISO 8601 timestamp with timezone
-  reference_number: string | null
-  notes: string | null
-  payment_for: PaymentFor
+  notes:            string
 }
 
 type RenewalState = {
-  user: UserType
+  user:         UserType
   subscription: Subscription | null
-  prices: Record<RenewalPlan["id"], string>
+  prices:       PlanPrices
   selectedPlan: RenewalPlan["id"] | null
-  /** 4-step flow: select → payment → confirm → check-in */
-  step: "select" | "payment" | "confirm" | "check-in"
-  payment: PaymentInput
+  paymentForm:  PaymentForm
+  step:         "select" | "confirm" | "check-in"
   isProcessing: boolean
+  paymentError: string
 }
 
+// ─── Other types ──────────────────────────────────────────────────────────────
 type ScanResult = {
   success: boolean
   message: string
@@ -132,143 +120,138 @@ type HoursView        = "today" | "week" | "month" | "year" | "all"
 type StatusFilter     = "all" | "active" | "expired"
 type MembershipFilter = "all" | "monthly" | "daily" | "walkin"
 
-// ─── Constants ───────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+const generateId = () =>
+  `pay_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
 
 const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
-  cash: "Cash",
-  gcash: "GCash",
-  paymaya: "PayMaya",
+  cash:         "Cash",
+  gcash:        "GCash",
+  paymaya:      "PayMaya",
   banktransfer: "Bank Transfer",
 }
 
 const PAYMENT_FOR_LABELS: Record<PaymentFor, string> = {
   membership: "Membership",
-  coaching: "Coaching",
-  both: "Membership + Coaching",
-  other: "Other",
+  coaching:   "Coaching",
+  both:       "Both",
+  other:      "Other",
 }
 
-const EMPTY_PAYMENT: PaymentInput = {
-  amount: "",
-  payment_method: "",
-  reference_number: "",
-  notes: "",
-  payment_for: "",
-}
-
-const generatePaymentId = () =>
-  `PAY-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`
-
-const RENEWAL_STEPS = ["select", "payment", "confirm", "check-in"] as const
-
-// ─── Component ───────────────────────────────────────────────────────────────
-
+// ─── Component ────────────────────────────────────────────────────────────────
 export function ScannerInterface() {
-  const [lastScan, setLastScan]             = useState<ScanResult | null>(null)
-  const [duplicateScan, setDuplicateScan]   = useState<DuplicateScan | null>(null)
+  const [lastScan, setLastScan] = useState<ScanResult | null>(null)
+  const [duplicateScan, setDuplicateScan] = useState<DuplicateScan | null>(null)
   const [activeSessions, setActiveSessions] = useState(0)
-  const [todayCheckIns, setTodayCheckIns]   = useState(0)
-  const [totalMembers, setTotalMembers]     = useState(0)
+  const [todayCheckIns, setTodayCheckIns] = useState(0)
+  const [totalMembers, setTotalMembers] = useState(0)
   const scanCooldowns = useRef<Map<string, number>>(new Map())
   const [monthlyCount, setMonthlyCount] = useState(0)
-  const [dailyCount, setDailyCount]     = useState(0)
-  const [walkinCount, setWalkinCount]   = useState(0)
+  const [dailyCount, setDailyCount] = useState(0)
+  const [walkinCount, setWalkinCount] = useState(0)
   const [showMembersDialog, setShowMembersDialog] = useState(false)
-  const [membersWithStats, setMembersWithStats]   = useState<MemberWithStats[]>([])
-  const [isLoadingMembers, setIsLoadingMembers]   = useState(false)
-  const [searchTerm, setSearchTerm]               = useState("")
-  const [hoursView, setHoursView]                 = useState<HoursView>("week")
-  const [statusFilter, setStatusFilter]           = useState<StatusFilter>("all")
-  const [membershipFilter, setMembershipFilter]   = useState<MembershipFilter>("all")
-  const [lastUpdate, setLastUpdate]               = useState<Date>(new Date())
-  const [isOnline, setIsOnline]   = useState(typeof navigator !== "undefined" ? navigator.onLine : true)
-  const [pendingSyncCount, setPendingSyncCount]   = useState(0)
-
-  // ── Renewal ───────────────────────────────────────────────────────────────
+  const [membersWithStats, setMembersWithStats] = useState<MemberWithStats[]>([])
+  const [isLoadingMembers, setIsLoadingMembers] = useState(false)
+  const [searchTerm, setSearchTerm] = useState("")
+  const [hoursView, setHoursView] = useState<HoursView>("week")
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all")
+  const [membershipFilter, setMembershipFilter] = useState<MembershipFilter>("all")
+  const [lastUpdate, setLastUpdate] = useState<Date>(new Date())
+  const [isOnline, setIsOnline] = useState(
+    typeof navigator !== "undefined" ? navigator.onLine : true
+  )
+  const [pendingSyncCount, setPendingSyncCount] = useState(0)
   const [renewal, setRenewal] = useState<RenewalState | null>(null)
+
+  // ── Renewal helpers ──────────────────────────────────────────────────────
+  const emptyPaymentForm = (): PaymentForm => ({
+    payment_method:   "",
+    payment_for:      "membership",
+    reference_number: "",
+    notes:            "",
+  })
 
   const openRenewal = (user: UserType, subscription: Subscription | null) => {
     setRenewal({
       user,
       subscription,
-      prices: { "1m": "", "6m": "", "1y": "" },
+      prices:       { "1m": "", "6m": "", "1y": "" },
       selectedPlan: null,
-      step: "select",
-      payment: EMPTY_PAYMENT,
+      paymentForm:  emptyPaymentForm(),
+      step:         "select",
       isProcessing: false,
+      paymentError: "",
     })
     setLastScan(null)
   }
 
   const closeRenewal = () => setRenewal(null)
 
-  /** Move from plan selection to payment, pre-filling amount from the chosen plan's price */
-  const handleGoToPayment = () => {
-    if (!renewal?.selectedPlan) return
+  const updatePaymentForm = (patch: Partial<PaymentForm>) =>
     setRenewal(prev =>
-      prev
-        ? {
-            ...prev,
-            step: "payment",
-            payment: {
-              ...EMPTY_PAYMENT,
-              amount: prev.prices[prev.selectedPlan!] || "",
-              payment_for: "membership",
-            },
-          }
-        : null
+      prev ? { ...prev, paymentForm: { ...prev.paymentForm, ...patch }, paymentError: "" } : null
     )
+
+  const needsReference =
+    renewal &&
+    ["gcash", "paymaya", "banktransfer"].includes(renewal.paymentForm.payment_method)
+
+  const validatePayment = (): string => {
+    if (!renewal) return ""
+    if (!renewal.selectedPlan)
+      return "Please select a plan."
+    if (!renewal.prices[renewal.selectedPlan] || parseFloat(renewal.prices[renewal.selectedPlan]) <= 0)
+      return "Please enter a valid price for the selected plan."
+    if (!renewal.paymentForm.payment_method)
+      return "Please select a payment method."
+    if (!renewal.paymentForm.payment_for)
+      return "Please select what this payment is for."
+    if (
+      ["gcash", "paymaya", "banktransfer"].includes(renewal.paymentForm.payment_method) &&
+      !renewal.paymentForm.reference_number.trim()
+    )
+      return "A reference number is required for non-cash payments."
+    return ""
   }
 
-  /** Save payment record + upsert subscription */
   const handleRenewConfirm = async () => {
-    if (!renewal?.selectedPlan) return
+    const err = validatePayment()
+    if (err) { setRenewal(prev => prev ? { ...prev, paymentError: err } : null); return }
+    if (!renewal || !renewal.selectedPlan) return
+
     setRenewal(prev => prev ? { ...prev, isProcessing: true } : null)
 
     const plan   = RENEWAL_PLANS.find(p => p.id === renewal.selectedPlan)!
     const now    = new Date()
     const newEnd = addMonths(now, plan.months)
+    const amount = parseFloat(renewal.prices[renewal.selectedPlan])
 
-    const amount = parseFloat(renewal.payment.amount || "0")
-
-    // Build Payment object matching storageService.addPayment / Payment type
-    const paymentRecord = {
-      paymentId:       generatePaymentId(),
-      userId:          renewal.user.userId,
-      amount,
-      paymentMethod:   renewal.payment.payment_method as PaymentMethod,
-      paymentDate:     now.toISOString(),
-      referenceNumber: renewal.payment.reference_number || null,
-      notes:           renewal.payment.notes || null,
-      paymentFor:      renewal.payment.payment_for as PaymentFor,
-      createdAt:       now.toISOString(),
-      updatedAt:       now.toISOString(),
-    }
-
-    await storageService.addPayment(paymentRecord as any)
-
-    // Build Subscription using fields that exist in the storage service schema
-    const planDurationMap: Record<RenewalPlan["id"], string> = {
-      "1m": "1 month",
-      "6m": "6 months",
-      "1y": "1 year",
-    }
-
+    // 1. Update subscription
     const updatedSub: Subscription = {
       ...(renewal.subscription ?? {}),
-      userId:       renewal.user.userId,
-      startDate:    now.toISOString(),
-      endDate:      newEnd.toISOString(),
-      status:       "active",
-      planDuration: planDurationMap[renewal.selectedPlan!],
-      membershipType: renewal.subscription?.membershipType ?? "monthly",
-      coachingPreference: renewal.subscription?.coachingPreference ?? false,
-      paymentStatus: "paid",
-      paymentDate:   now.toISOString(),
-      createdAt:     renewal.subscription?.createdAt ?? now.toISOString(),
+      userId:    renewal.user.userId,
+      startDate: now.toISOString(),
+      endDate:   newEnd.toISOString(),
+      planId:    plan.id,
     } as Subscription
 
     await storageService.addOrUpdateSubscription(updatedSub)
+
+    // 2. Save payment record — mapped to the Payment camelCase type
+    const nowIso = now.toISOString()
+    await storageService.addPayment({
+      paymentId:       generateId(),
+      userId:          renewal.user.userId,
+      amount,
+      paymentMethod:   renewal.paymentForm.payment_method as PaymentMethod,
+      paymentDate:     nowIso,
+      referenceNumber: renewal.paymentForm.reference_number.trim(),
+      notes:           renewal.paymentForm.notes.trim(),
+      paymentFor:      renewal.paymentForm.payment_for as PaymentFor,
+      createdAt:       nowIso,
+      updatedAt:       nowIso,
+    } as unknown as Payment)
+
     await updateStats()
 
     setRenewal(prev =>
@@ -284,44 +267,37 @@ export function ScannerInterface() {
     closeRenewal()
   }
 
-  // Derived
-  const selectedPlanObj = renewal ? RENEWAL_PLANS.find(p => p.id === renewal.selectedPlan) : null
-  const renewalNewEnd   = selectedPlanObj ? addMonths(new Date(), selectedPlanObj.months) : null
-  const needsReference  = !!renewal?.payment.payment_method && renewal.payment.payment_method !== "cash"
-  const isPaymentValid  = !!renewal?.payment.amount &&
-    parseFloat(renewal.payment.amount) > 0 &&
-    !!renewal.payment.payment_method &&
-    !!renewal.payment.payment_for &&
-    (!needsReference || !!renewal.payment.reference_number)
-  // ──────────────────────────────────────────────────────────────────────────
-
+  // ── Shared helpers ───────────────────────────────────────────────────────
   const formatDate = (date?: string) => {
     if (!date) return "—"
     return new Date(date).toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" })
   }
 
-  const getRemainingDays = (sub?: Subscription | null) =>
-    sub ? Math.ceil((new Date(sub.endDate).getTime() - Date.now()) / 86400000) : 0
+  const getRemainingDays = (sub?: Subscription | null) => {
+    if (!sub) return 0
+    return Math.ceil((new Date(sub.endDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))
+  }
 
   const getExpiryStatus = (sub?: Subscription | null) => {
     if (!sub) return "expired"
-    const d = getRemainingDays(sub)
-    if (d <= 0) return "expired"
-    if (d <= 7) return "soon"
+    const days = getRemainingDays(sub)
+    if (days <= 0) return "expired"
+    if (days <= 7) return "soon"
     return "active"
   }
 
   const formatHours = (ms: number) => {
-    const h = ms / 3600000
-    return h < 1 ? `${Math.round(ms / 60000)}m` : `${h.toFixed(1)}h`
+    const hours = ms / (1000 * 60 * 60)
+    if (hours < 1) return `${Math.round(ms / (1000 * 60))}m`
+    return `${hours.toFixed(1)}h`
   }
 
   const formatLastUpdate = (date: Date) => {
-    const s = Math.floor((Date.now() - date.getTime()) / 1000)
-    if (s < 10) return "Just now"
-    if (s < 60) return `${s}s ago`
-    const m = Math.floor(s / 60)
-    if (m < 60) return `${m}m ago`
+    const diffSeconds = Math.floor((new Date().getTime() - date.getTime()) / 1000)
+    if (diffSeconds < 10) return "Just now"
+    if (diffSeconds < 60) return `${diffSeconds}s ago`
+    const diffMinutes = Math.floor(diffSeconds / 60)
+    if (diffMinutes < 60) return `${diffMinutes}m ago`
     return date.toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit" })
   }
 
@@ -329,9 +305,10 @@ export function ScannerInterface() {
     if (!subscription) return "unknown"
     const start = new Date(subscription.startDate)
     const end   = new Date(subscription.endDate)
-    const dh    = (end.getTime() - start.getTime()) / 3600000
-    if (end.getHours() === 0 && end.getMinutes() === 0 && dh <= 24) return "daily"
-    const months = (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth())
+    const durationHours = (end.getTime() - start.getTime()) / (1000 * 60 * 60)
+    if (end.getHours() === 0 && end.getMinutes() === 0 && durationHours <= 24) return "daily"
+    const months =
+      (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth())
     if ([1, 6, 12].includes(months)) return "monthly"
     return "walkin"
   }
@@ -359,7 +336,10 @@ export function ScannerInterface() {
         const t = new Date(log.timestamp)
         if (periodStart && t < periodStart) continue
         if (log.action === "check-in") lastIn = t
-        if (log.action === "check-out" && lastIn) { totalMs += t.getTime() - lastIn.getTime(); lastIn = null }
+        if (log.action === "check-out" && lastIn) {
+          totalMs += t.getTime() - lastIn.getTime()
+          lastIn = null
+        }
       }
       return totalMs
     }
@@ -374,13 +354,19 @@ export function ScannerInterface() {
 
   const loadMembersWithStats = async () => {
     setIsLoadingMembers(true)
-    const [users, allSubscriptions] = await Promise.all([storageService.getUsers(), storageService.getSubscriptions()])
+    const [users, allSubscriptions] = await Promise.all([
+      storageService.getUsers(),
+      storageService.getSubscriptions(),
+    ])
     const subscriptionMap = new Map(allSubscriptions.map(sub => [sub.userId, sub]))
     const membersData: MemberWithStats[] = users.map(user => {
       const subscription   = subscriptionMap.get(user.userId) || null
       const isActive       = subscriptionService.isSubscriptionActive(subscription)
       const membershipType = getMembershipType(subscription)
-      return { user, subscription, isActive, membershipType, gymHours: { today: 0, week: 0, month: 0, year: 0, all: 0 } }
+      return {
+        user, subscription, isActive, membershipType,
+        gymHours: { today: 0, week: 0, month: 0, year: 0, all: 0 },
+      }
     })
     membersData.sort((a, b) => {
       if (a.isActive !== b.isActive) return a.isActive ? -1 : 1
@@ -392,8 +378,8 @@ export function ScannerInterface() {
       const gymHours = await calculateGymHours(member.user.userId)
       setMembersWithStats(prev => {
         const updated = [...prev]
-        const idx     = updated.findIndex(m => m.user.userId === member.user.userId)
-        if (idx !== -1) updated[idx] = { ...updated[idx], gymHours }
+        const index   = updated.findIndex(m => m.user.userId === member.user.userId)
+        if (index !== -1) updated[index] = { ...updated[index], gymHours }
         return updated
       })
     }
@@ -410,27 +396,32 @@ export function ScannerInterface() {
       setActiveSessions(sessions.length)
       setTodayCheckIns(logs.filter(l => l.action === "check-in").length)
       setTotalMembers(users.length)
-      const subMap = new Map(allSubscriptions.map(sub => [sub.userId, sub]))
+      const subscriptionMap = new Map(allSubscriptions.map(sub => [sub.userId, sub]))
       let monthly = 0, daily = 0, walkin = 0
       for (const user of users) {
-        const t = getMembershipType(subMap.get(user.userId) || null)
-        if (t === "monthly") monthly++
-        else if (t === "daily") daily++
-        else if (t === "walkin") walkin++
+        const type = getMembershipType(subscriptionMap.get(user.userId) || null)
+        if (type === "monthly") monthly++
+        else if (type === "daily") daily++
+        else if (type === "walkin") walkin++
       }
-      setMonthlyCount(monthly); setDailyCount(daily); setWalkinCount(walkin)
-      setLastUpdate(new Date()); setIsOnline(true)
-    } catch { setIsOnline(false) }
+      setMonthlyCount(monthly)
+      setDailyCount(daily)
+      setWalkinCount(walkin)
+      setLastUpdate(new Date())
+      setIsOnline(true)
+    } catch {
+      setIsOnline(false)
+    }
   }
 
   const handleScan = async (code: string) => {
-    const userId = code.trim()
+    const userId      = code.trim()
     const lastScanTime = scanCooldowns.current.get(userId)
-    const now = Date.now()
+    const now         = Date.now()
     if (lastScanTime) {
-      const elapsed = (now - lastScanTime) / 1000
-      if (elapsed < SCAN_COOLDOWN_SECONDS) {
-        const cooldownLeft = Math.ceil(SCAN_COOLDOWN_SECONDS - elapsed)
+      const secondsElapsed = (now - lastScanTime) / 1000
+      if (secondsElapsed < SCAN_COOLDOWN_SECONDS) {
+        const cooldownLeft = Math.ceil(SCAN_COOLDOWN_SECONDS - secondsElapsed)
         const user = await storageService.getUserById(userId)
         setDuplicateScan({ userName: user?.name || userId, userId, cooldownLeft })
         return
@@ -452,9 +443,11 @@ export function ScannerInterface() {
       speakExpired(name)
       if (user) { openRenewal(user, subscription); return }
     } else if (result.log?.action === "check-in") {
-      speakCheckIn(name || "member"); scanCooldowns.current.set(userId, now)
+      speakCheckIn(name || "member")
+      scanCooldowns.current.set(userId, now)
     } else if (result.log?.action === "check-out") {
-      speakCheckOut(name || "member"); scanCooldowns.current.set(userId, now)
+      speakCheckOut(name || "member")
+      scanCooldowns.current.set(userId, now)
     }
 
     setLastScan({ ...result, subscription, user })
@@ -464,38 +457,73 @@ export function ScannerInterface() {
 
   const { isScanning } = useQRScanner(handleScan)
 
-  useEffect(() => { updateStats(); const i = setInterval(updateStats, 5000); return () => clearInterval(i) }, [])
-  useEffect(() => { if (showMembersDialog) loadMembersWithStats() }, [showMembersDialog])
   useEffect(() => {
-    const enter = () => { if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {}); window.removeEventListener("click", enter) }
-    window.addEventListener("click", enter); return () => window.removeEventListener("click", enter)
+    updateStats()
+    const i = setInterval(updateStats, 5000)
+    return () => clearInterval(i)
   }, [])
-  useEffect(() => { if (!lastScan) return; const t = setTimeout(() => setLastScan(null), 5000); return () => clearTimeout(t) }, [lastScan])
-  useEffect(() => { if (!duplicateScan) return; const t = setTimeout(() => setDuplicateScan(null), 3000); return () => clearTimeout(t) }, [duplicateScan])
+
+  useEffect(() => { if (showMembersDialog) loadMembersWithStats() }, [showMembersDialog])
+
+  useEffect(() => {
+    const enter = () => {
+      if (!document.fullscreenElement)
+        document.documentElement.requestFullscreen().catch(() => {})
+      window.removeEventListener("click", enter)
+    }
+    window.addEventListener("click", enter)
+    return () => window.removeEventListener("click", enter)
+  }, [])
+
+  useEffect(() => {
+    if (!lastScan) return
+    const t = setTimeout(() => setLastScan(null), 5000)
+    return () => clearTimeout(t)
+  }, [lastScan])
+
+  useEffect(() => {
+    if (!duplicateScan) return
+    const t = setTimeout(() => setDuplicateScan(null), 3000)
+    return () => clearTimeout(t)
+  }, [duplicateScan])
+
   useEffect(() => {
     const handleOnline = async () => {
       setIsOnline(true)
       const { synced } = await offlineQueue.flushQueue()
       if (synced > 0) console.log(`Synced ${synced} offline items`)
-      setPendingSyncCount(offlineQueue.getPendingCount()); updateStats()
+      setPendingSyncCount(offlineQueue.getPendingCount())
+      updateStats()
     }
     const handleOffline = () => setIsOnline(false)
-    window.addEventListener("online", handleOnline); window.addEventListener("offline", handleOffline)
+    window.addEventListener("online", handleOnline)
+    window.addEventListener("offline", handleOffline)
     setPendingSyncCount(offlineQueue.getPendingCount())
     if (navigator.onLine && offlineQueue.getPendingCount() > 0)
       offlineQueue.flushQueue().then(() => setPendingSyncCount(offlineQueue.getPendingCount()))
-    return () => { window.removeEventListener("online", handleOnline); window.removeEventListener("offline", handleOffline) }
+    return () => {
+      window.removeEventListener("online", handleOnline)
+      window.removeEventListener("offline", handleOffline)
+    }
   }, [])
 
   const handleMembersCardClick = (filter?: MembershipFilter) => {
-    setMembershipFilter(filter || "all"); setShowMembersDialog(true)
+    setMembershipFilter(filter || "all")
+    setShowMembersDialog(true)
   }
 
-  const filteredMembers = membersWithStats.filter(m => {
-    const ms = searchTerm === "" || m.user.name.toLowerCase().includes(searchTerm.toLowerCase()) || m.user.userId.toLowerCase().includes(searchTerm.toLowerCase())
-    const ss = statusFilter === "all" || (statusFilter === "active" && m.isActive) || (statusFilter === "expired" && !m.isActive)
-    const ts = membershipFilter === "all" || m.membershipType === membershipFilter
-    return ms && ss && ts
+  const filteredMembers = membersWithStats.filter(member => {
+    const matchesSearch =
+      searchTerm === "" ||
+      member.user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      member.user.userId.toLowerCase().includes(searchTerm.toLowerCase())
+    const matchesStatus =
+      statusFilter === "all" ||
+      (statusFilter === "active" && member.isActive) ||
+      (statusFilter === "expired" && !member.isActive)
+    const matchesMembership =
+      membershipFilter === "all" || member.membershipType === membershipFilter
+    return matchesSearch && matchesStatus && matchesMembership
   })
 
   const activeCount          = membersWithStats.filter(m => m.isActive).length
@@ -504,11 +532,18 @@ export function ScannerInterface() {
   const filteredDailyCount   = membersWithStats.filter(m => m.membershipType === "daily").length
   const filteredWalkinCount  = membersWithStats.filter(m => m.membershipType === "walkin").length
 
+  const selectedPlanObj = renewal ? RENEWAL_PLANS.find(p => p.id === renewal.selectedPlan) : null
+  const renewalNewEnd   = selectedPlanObj ? addMonths(new Date(), selectedPlanObj.months) : null
+
+  // ── Render ───────────────────────────────────────────────────────────────
   return (
     <div className="space-y-6">
+
       {/* Status bar */}
       <div className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
-        {isOnline ? <Wifi className="w-3 h-3 text-emerald-500" /> : <WifiOff className="w-3 h-3 text-red-500" />}
+        {isOnline
+          ? <Wifi className="w-3 h-3 text-emerald-500" />
+          : <WifiOff className="w-3 h-3 text-red-500" />}
         <span>{isOnline ? "Live" : "Offline"} • Updated {formatLastUpdate(lastUpdate)}</span>
         {pendingSyncCount > 0 && (
           <span className="flex items-center gap-1 text-yellow-500">
@@ -517,46 +552,71 @@ export function ScannerInterface() {
         )}
       </div>
 
-      {/* Top stats */}
+      {/* Top stat cards */}
       <div className="grid grid-cols-3 gap-2 md:gap-4">
-        <Card className="p-3 md:p-6"><p className="text-xs md:text-sm text-muted-foreground">Active Now</p><p className="text-xl md:text-2xl font-bold">{activeSessions}</p></Card>
-        <Card className="p-3 md:p-6"><p className="text-xs md:text-sm text-muted-foreground">Today's Check-ins</p><p className="text-xl md:text-2xl font-bold">{todayCheckIns}</p></Card>
-        <Card className="p-3 md:p-6 cursor-pointer hover:bg-zinc-800/50 transition-colors group" onClick={() => handleMembersCardClick("all")}>
+        <Card className="p-3 md:p-6">
+          <p className="text-xs md:text-sm text-muted-foreground">Active Now</p>
+          <p className="text-xl md:text-2xl font-bold">{activeSessions}</p>
+        </Card>
+        <Card className="p-3 md:p-6">
+          <p className="text-xs md:text-sm text-muted-foreground">Today's Check-ins</p>
+          <p className="text-xl md:text-2xl font-bold">{todayCheckIns}</p>
+        </Card>
+        <Card className="p-3 md:p-6 cursor-pointer hover:bg-zinc-800/50 transition-colors group"
+          onClick={() => handleMembersCardClick("all")}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 md:gap-3">
               <Users className="w-4 h-4 md:w-5 md:h-5 text-muted-foreground hidden sm:block" />
-              <div><p className="text-xs md:text-sm text-muted-foreground">Total Members</p><p className="text-xl md:text-2xl font-bold">{totalMembers}</p></div>
+              <div>
+                <p className="text-xs md:text-sm text-muted-foreground">Total Members</p>
+                <p className="text-xl md:text-2xl font-bold">{totalMembers}</p>
+              </div>
             </div>
             <ChevronRight className="w-4 h-4 md:w-5 md:h-5 text-muted-foreground group-hover:text-foreground transition-colors" />
           </div>
         </Card>
       </div>
 
-      {/* Membership breakdown */}
+      {/* Membership type cards */}
       <div className="grid grid-cols-3 gap-2 md:gap-4">
-        <Card className="p-3 md:p-6 cursor-pointer hover:bg-zinc-800/50 transition-colors group border-l-4 border-l-primary" onClick={() => handleMembersCardClick("monthly")}>
+        <Card className="p-3 md:p-6 cursor-pointer hover:bg-zinc-800/50 transition-colors group border-l-4 border-l-primary"
+          onClick={() => handleMembersCardClick("monthly")}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 md:gap-3">
               <CalendarDays className="w-4 h-4 md:w-5 md:h-5 text-primary hidden sm:block" />
-              <div><p className="text-xs md:text-sm text-muted-foreground">Monthly</p><p className="text-xl md:text-2xl font-bold">{monthlyCount}</p><p className="text-[10px] md:text-xs text-muted-foreground hidden sm:block">1m, 6m, 1 year plans</p></div>
+              <div>
+                <p className="text-xs md:text-sm text-muted-foreground">Monthly</p>
+                <p className="text-xl md:text-2xl font-bold">{monthlyCount}</p>
+                <p className="text-[10px] md:text-xs text-muted-foreground hidden sm:block">1m, 6m, 1 year plans</p>
+              </div>
             </div>
             <ChevronRight className="w-4 h-4 md:w-5 md:h-5 text-muted-foreground group-hover:text-foreground transition-colors hidden sm:block" />
           </div>
         </Card>
-        <Card className="p-3 md:p-6 cursor-pointer hover:bg-zinc-800/50 transition-colors group border-l-4 border-l-purple-600" onClick={() => handleMembersCardClick("daily")}>
+        <Card className="p-3 md:p-6 cursor-pointer hover:bg-zinc-800/50 transition-colors group border-l-4 border-l-purple-600"
+          onClick={() => handleMembersCardClick("daily")}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 md:gap-3">
               <Calendar className="w-4 h-4 md:w-5 md:h-5 text-purple-600 hidden sm:block" />
-              <div><p className="text-xs md:text-sm text-muted-foreground">Daily</p><p className="text-xl md:text-2xl font-bold">{dailyCount}</p><p className="text-[10px] md:text-xs text-muted-foreground hidden sm:block">Expires at midnight</p></div>
+              <div>
+                <p className="text-xs md:text-sm text-muted-foreground">Daily</p>
+                <p className="text-xl md:text-2xl font-bold">{dailyCount}</p>
+                <p className="text-[10px] md:text-xs text-muted-foreground hidden sm:block">Expires at midnight</p>
+              </div>
             </div>
             <ChevronRight className="w-4 h-4 md:w-5 md:h-5 text-muted-foreground group-hover:text-foreground transition-colors hidden sm:block" />
           </div>
         </Card>
-        <Card className="p-3 md:p-6 cursor-pointer hover:bg-zinc-800/50 transition-colors group border-l-4 border-l-blue-600" onClick={() => handleMembersCardClick("walkin")}>
+        <Card className="p-3 md:p-6 cursor-pointer hover:bg-zinc-800/50 transition-colors group border-l-4 border-l-blue-600"
+          onClick={() => handleMembersCardClick("walkin")}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 md:gap-3">
               <CalendarClock className="w-4 h-4 md:w-5 md:h-5 text-blue-600 hidden sm:block" />
-              <div><p className="text-xs md:text-sm text-muted-foreground">Walk-in</p><p className="text-xl md:text-2xl font-bold">{walkinCount}</p><p className="text-[10px] md:text-xs text-muted-foreground hidden sm:block">Custom date range</p></div>
+              <div>
+                <p className="text-xs md:text-sm text-muted-foreground">Walk-in</p>
+                <p className="text-xl md:text-2xl font-bold">{walkinCount}</p>
+                <p className="text-[10px] md:text-xs text-muted-foreground hidden sm:block">Custom date range</p>
+              </div>
             </div>
             <ChevronRight className="w-4 h-4 md:w-5 md:h-5 text-muted-foreground group-hover:text-foreground transition-colors hidden sm:block" />
           </div>
@@ -568,7 +628,9 @@ export function ScannerInterface() {
         <div className={`p-6 md:p-10 rounded-full ${isScanning ? "bg-primary/20 animate-pulse" : "bg-muted"}`}>
           <ScanLine className="w-12 h-12 md:w-20 md:h-20 text-primary" />
         </div>
-        <h2 className="text-2xl md:text-3xl font-bold mt-4 md:mt-6">{isScanning ? "Scanning..." : "Ready to Scan"}</h2>
+        <h2 className="text-2xl md:text-3xl font-bold mt-4 md:mt-6">
+          {isScanning ? "Scanning..." : "Ready to Scan"}
+        </h2>
         <p className="text-muted-foreground mt-2 text-sm md:text-base">Present QR Code to Scanner</p>
       </Card>
 
@@ -580,13 +642,18 @@ export function ScannerInterface() {
               <Users className="w-5 h-5" />
               {membershipFilter === "all"
                 ? `All Members (${totalMembers})`
-                : `${getMembershipLabel(membershipFilter)} Members (${membershipFilter === "monthly" ? monthlyCount : membershipFilter === "daily" ? dailyCount : walkinCount})`}
+                : `${getMembershipLabel(membershipFilter)} Members (${
+                    membershipFilter === "monthly" ? monthlyCount
+                    : membershipFilter === "daily" ? dailyCount
+                    : walkinCount
+                  })`}
             </DialogTitle>
           </DialogHeader>
           <div className="flex flex-col sm:flex-row gap-3 py-3 border-b">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input placeholder="Search by name or ID..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="pl-9" />
+              <Input placeholder="Search by name or ID..." value={searchTerm}
+                onChange={e => setSearchTerm(e.target.value)} className="pl-9" />
             </div>
             <Select value={membershipFilter} onValueChange={v => setMembershipFilter(v as MembershipFilter)}>
               <SelectTrigger className="w-[150px]"><SelectValue placeholder="Type" /></SelectTrigger>
@@ -626,9 +693,13 @@ export function ScannerInterface() {
           </div>
           <div className="flex-1 overflow-y-auto space-y-2 pr-2">
             {isLoadingMembers ? (
-              <div className="flex items-center justify-center py-12"><p className="text-muted-foreground">Loading members...</p></div>
+              <div className="flex items-center justify-center py-12">
+                <p className="text-muted-foreground">Loading members...</p>
+              </div>
             ) : filteredMembers.length === 0 ? (
-              <div className="flex items-center justify-center py-12"><p className="text-muted-foreground">No members found</p></div>
+              <div className="flex items-center justify-center py-12">
+                <p className="text-muted-foreground">No members found</p>
+              </div>
             ) : (
               filteredMembers.map(member => (
                 <Card key={member.user.userId} className="p-4">
@@ -637,12 +708,17 @@ export function ScannerInterface() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-semibold truncate">{member.user.name}</span>
                         <span className="text-xs text-muted-foreground font-mono">{member.user.userId}</span>
-                        <Badge variant={member.isActive ? "default" : "destructive"}>{member.isActive ? "Active" : "Expired"}</Badge>
+                        <Badge variant={member.isActive ? "default" : "destructive"}>
+                          {member.isActive ? "Active" : "Expired"}
+                        </Badge>
                         {getMembershipBadge(member.membershipType)}
                       </div>
                       <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
                         {member.subscription && (
-                          <><span>Expires: {formatDate(member.subscription.endDate)}</span>{member.isActive && <span>({getRemainingDays(member.subscription)} days left)</span>}</>
+                          <>
+                            <span>Expires: {formatDate(member.subscription.endDate)}</span>
+                            {member.isActive && <span>({getRemainingDays(member.subscription)} days left)</span>}
+                          </>
                         )}
                       </div>
                     </div>
@@ -650,14 +726,18 @@ export function ScannerInterface() {
                       <Timer className="w-4 h-4 text-muted-foreground" />
                       <div>
                         <p className="font-bold text-lg">{formatHours(member.gymHours[hoursView])}</p>
-                        <p className="text-[10px] text-muted-foreground uppercase">{hoursView === "all" ? "All Time" : `This ${hoursView}`}</p>
+                        <p className="text-[10px] text-muted-foreground uppercase">
+                          {hoursView === "all" ? "All Time" : `This ${hoursView}`}
+                        </p>
                       </div>
                     </div>
                   </div>
                   <div className="flex gap-2 md:gap-4 mt-3 pt-3 border-t text-[10px] md:text-xs">
                     {(["today", "week", "month", "year", "all"] as HoursView[]).map(v => (
                       <div key={v} className="flex-1 text-center">
-                        <p className="text-muted-foreground capitalize">{v === "all" ? "All" : v.charAt(0).toUpperCase() + v.slice(1)}</p>
+                        <p className="text-muted-foreground capitalize">
+                          {v === "all" ? "All" : v.charAt(0).toUpperCase() + v.slice(1)}
+                        </p>
                         <p className="font-semibold">{formatHours(member.gymHours[v])}</p>
                       </div>
                     ))}
@@ -669,7 +749,7 @@ export function ScannerInterface() {
         </DialogContent>
       </Dialog>
 
-      {/* ── DUPLICATE SCAN POPUP ──────────────────────────────────────────── */}
+      {/* ── Duplicate scan popup ───────────────────────────────────────────── */}
       {duplicateScan && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm p-4">
           <Card className="w-full max-w-xl p-5 md:p-8 bg-white rounded-xl shadow-2xl border border-yellow-400">
@@ -692,23 +772,35 @@ export function ScannerInterface() {
         </div>
       )}
 
-      {/* ── SCAN RESULT POPUP ─────────────────────────────────────────────── */}
+      {/* ── Scan result popup ──────────────────────────────────────────────── */}
       {lastScan && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm p-4">
           <Card className="w-full max-w-xl p-5 md:p-8 bg-white rounded-xl shadow-2xl border">
             <div className="flex gap-4 md:gap-6">
               <div className="flex-1 min-w-0">
-                <h2 className={`text-2xl md:text-3xl font-bold ${lastScan.success ? "text-gold-600" : "text-black-600"}`}>{lastScan.message}</h2>
-                <p className="text-base md:text-lg font-bold mt-1 truncate">{lastScan.user?.name || lastScan.log?.userName || "Unknown User"}</p>
-                <p className="text-xs md:text-sm text-gray-600 truncate">ID: {lastScan.log?.userId}</p>
-                <div className="mt-2">{lastScan.subscription && getMembershipBadge(getMembershipType(lastScan.subscription))}</div>
+                <h2 className={`text-2xl md:text-3xl font-bold ${lastScan.success ? "text-gold-600" : "text-black-600"}`}>
+                  {lastScan.message}
+                </h2>
+                <p className="text-base md:text-lg font-bold mt-1 truncate">
+                  {lastScan.user?.name || lastScan.log?.userName || "Unknown User"}
+                </p>
+                <p className="text-xs md:text-sm text-white-600 truncate">ID: {lastScan.log?.userId}</p>
+                <div className="mt-2">
+                  {lastScan.subscription && getMembershipBadge(getMembershipType(lastScan.subscription))}
+                </div>
                 <div className="mt-3 md:mt-4">
                   {(() => {
                     const status = getExpiryStatus(lastScan.subscription)
                     const days   = getRemainingDays(lastScan.subscription)
-                    if (status === "expired") return <Badge variant="destructive">🔴 Expired</Badge>
-                    if (status === "soon")    return <Badge className="bg-yellow-400 text-black">🟡 Expiring Soon ({days} days)</Badge>
-                    return <Badge className="bg-green-600">🟢 Active — Expires {formatDate(lastScan.subscription?.endDate)}</Badge>
+                    if (status === "expired")
+                      return <Badge variant="destructive">🔴 Expired</Badge>
+                    if (status === "soon")
+                      return <Badge className="bg-yellow-400 text-black">🟡 Expiring Soon ({days} days)</Badge>
+                    return (
+                      <Badge className="bg-green-600">
+                        🟢 Active — Expires {formatDate(lastScan.subscription?.endDate)}
+                      </Badge>
+                    )
                   })()}
                 </div>
               </div>
@@ -717,269 +809,294 @@ export function ScannerInterface() {
         </div>
       )}
 
-      {/* ── RENEWAL POPUP (4-step) ─────────────────────────────────────────── */}
+      {/* ── RENEWAL POPUP ──────────────────────────────────────────────────── */}
       {renewal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
           <Card className="w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-red-200 overflow-hidden">
 
             {/* Header */}
-            <div className="bg-red-50 px-6 py-4 border-b border-red-100">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="p-2 rounded-full bg-red-100 shrink-0">
-                    <RefreshCw className="w-5 h-5 text-red-600" />
-                  </div>
-                  <div className="min-w-0">
-                    <h2 className="text-lg font-bold text-red-700">Membership Expired</h2>
-                    <p className="text-sm text-red-500 font-medium truncate">{renewal.user.name} · {renewal.user.userId}</p>
-                  </div>
+            <div className="bg-red-50 px-6 py-5 border-b border-red-100">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-full bg-red-100">
+                  <RefreshCw className="w-6 h-6 text-red-600" />
                 </div>
-                {/* Step dots */}
-                <div className="flex items-center gap-1.5 shrink-0">
-                  {RENEWAL_STEPS.map((s, i) => {
-                    const currentIdx = RENEWAL_STEPS.indexOf(renewal.step)
-                    return (
-                      <div
-                        key={s}
-                        className={`rounded-full transition-all ${
-                          i === currentIdx ? "w-5 h-2 bg-red-500" :
-                          i < currentIdx  ? "w-2 h-2 bg-red-300" :
-                                            "w-2 h-2 bg-gray-200"
-                        }`}
-                      />
-                    )
-                  })}
+                <div>
+                  <h2 className="text-xl font-bold text-red-700">Membership Expired</h2>
+                  <p className="text-sm text-red-500 font-medium">
+                    {renewal.user.name} · ID: {renewal.user.userId}
+                  </p>
                 </div>
               </div>
             </div>
 
-            <div className="px-6 py-5 space-y-4 max-h-[72vh] overflow-y-auto">
+            <div className="px-6 py-5 space-y-5 max-h-[72vh] overflow-y-auto">
 
-              {/* ── STEP 1: Select plan ──────────────────────────────────── */}
+              {/* ── STEP 1: Select plan + payment ── */}
               {renewal.step === "select" && (
                 <>
-                  <p className="text-sm text-gray-500">Choose a renewal plan and set a price.</p>
+                  <p className="text-sm text-gray-600">
+                    Select a renewal plan, enter the price, and complete the payment details.
+                  </p>
+
+                  {/* Plan rows */}
                   <div className="space-y-3">
                     {RENEWAL_PLANS.map(plan => (
                       <div
                         key={plan.id}
-                        onClick={() => setRenewal(prev => prev ? { ...prev, selectedPlan: plan.id } : null)}
+                        onClick={() =>
+                          setRenewal(prev => prev ? { ...prev, selectedPlan: plan.id, paymentError: "" } : null)
+                        }
                         className={`flex items-center justify-between gap-4 rounded-xl border-2 p-4 cursor-pointer transition-all ${
-                          renewal.selectedPlan === plan.id ? "border-primary bg-primary/5" : "border-gray-200 hover:border-gray-300"
+                          renewal.selectedPlan === plan.id
+                            ? "border-primary bg-primary/5"
+                            : "border-gray-200 hover:border-gray-300"
                         }`}
                       >
                         <div className="flex items-center gap-3">
-                          <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${renewal.selectedPlan === plan.id ? "border-primary" : "border-gray-300"}`}>
-                            {renewal.selectedPlan === plan.id && <div className="w-2 h-2 rounded-full bg-primary" />}
+                          <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                            renewal.selectedPlan === plan.id ? "border-primary" : "border-gray-300"
+                          }`}>
+                            {renewal.selectedPlan === plan.id && (
+                              <div className="w-2 h-2 rounded-full bg-primary" />
+                            )}
                           </div>
                           <span className="font-semibold text-gray-800">{plan.label}</span>
                         </div>
-                        <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
+                        {/* Price input per plan */}
+                        <div
+                          className="flex items-center gap-1.5"
+                          onClick={e => e.stopPropagation()}
+                        >
                           <span className="text-sm font-medium text-gray-500">₱</span>
                           <Input
-                            type="number" min="0" placeholder="0.00"
+                            type="number"
+                            min="0"
+                            placeholder="0.00"
                             value={renewal.prices[plan.id]}
-                            onChange={e => setRenewal(prev => prev ? { ...prev, prices: { ...prev.prices, [plan.id]: e.target.value } } : null)}
+                            onChange={e =>
+                              setRenewal(prev =>
+                                prev
+                                  ? { ...prev, prices: { ...prev.prices, [plan.id]: e.target.value }, paymentError: "" }
+                                  : null
+                              )
+                            }
                             className="w-28 text-right font-mono"
                           />
                         </div>
                       </div>
                     ))}
                   </div>
+
+                  {/* Payment details divider */}
+                  <div className="flex items-center gap-3 pt-1">
+                    <div className="flex-1 border-t" />
+                    <span className="text-xs text-gray-400 flex items-center gap-1.5">
+                      <CreditCard className="w-3.5 h-3.5" /> Payment Details
+                    </span>
+                    <div className="flex-1 border-t" />
+                  </div>
+
+                  {/* Payment method */}
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium text-gray-700">
+                      Payment Method <span className="text-red-500">*</span>
+                    </Label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(["cash", "gcash", "paymaya", "banktransfer"] as PaymentMethod[]).map(method => (
+                        <button
+                          key={method}
+                          type="button"
+                          onClick={() => updatePaymentForm({ payment_method: method, reference_number: "" })}
+                          className={`rounded-lg border-2 py-2.5 px-3 text-sm font-medium transition-all text-left ${
+                            renewal.paymentForm.payment_method === method
+                              ? "border-primary bg-primary/5 text-primary"
+                              : "border-gray-200 text-gray-700 hover:border-gray-300"
+                          }`}
+                        >
+                          {PAYMENT_METHOD_LABELS[method]}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Payment for */}
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium text-gray-700">
+                      Payment For <span className="text-red-500">*</span>
+                    </Label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(["membership", "coaching", "both", "other"] as PaymentFor[]).map(pf => (
+                        <button
+                          key={pf}
+                          type="button"
+                          onClick={() => updatePaymentForm({ payment_for: pf })}
+                          className={`rounded-lg border-2 py-2.5 px-3 text-sm font-medium transition-all text-left ${
+                            renewal.paymentForm.payment_for === pf
+                              ? "border-primary bg-primary/5 text-primary"
+                              : "border-gray-200 text-gray-700 hover:border-gray-300"
+                          }`}
+                        >
+                          {PAYMENT_FOR_LABELS[pf]}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Reference number */}
+                  <div className="space-y-1.5">
+                    <Label className="text-sm font-medium text-gray-700">
+                      Reference Number
+                      {needsReference
+                        ? <span className="text-red-500"> *</span>
+                        : <span className="text-gray-400 font-normal"> (optional)</span>}
+                    </Label>
+                    <Input
+                      placeholder={needsReference ? "Required for this payment method" : "Optional"}
+                      value={renewal.paymentForm.reference_number}
+                      onChange={e => updatePaymentForm({ reference_number: e.target.value })}
+                    />
+                  </div>
+
+                  {/* Notes */}
+                  <div className="space-y-1.5">
+                    <Label className="text-sm font-medium text-gray-700">
+                      Notes <span className="text-gray-400 font-normal">(optional)</span>
+                    </Label>
+                    <Textarea
+                      placeholder="Any additional notes..."
+                      rows={2}
+                      value={renewal.paymentForm.notes}
+                      onChange={e => updatePaymentForm({ notes: e.target.value })}
+                      className="resize-none"
+                    />
+                  </div>
+
+                  {/* Validation error */}
+                  {renewal.paymentError && (
+                    <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                      {renewal.paymentError}
+                    </p>
+                  )}
+
                   <div className="flex gap-3 pt-1">
                     <Button variant="outline" className="flex-1" onClick={closeRenewal}>
                       <XCircle className="w-4 h-4 mr-2" />Cancel
                     </Button>
                     <Button
                       className="flex-1"
-                      disabled={!renewal.selectedPlan || !renewal.prices[renewal.selectedPlan!]}
-                      onClick={handleGoToPayment}
+                      onClick={() => {
+                        const err = validatePayment()
+                        if (err) {
+                          setRenewal(prev => prev ? { ...prev, paymentError: err } : null)
+                          return
+                        }
+                        setRenewal(prev => prev ? { ...prev, step: "confirm", paymentError: "" } : null)
+                      }}
                     >
-                      <CreditCard className="w-4 h-4 mr-2" />Next: Payment
+                      <RefreshCw className="w-4 h-4 mr-2" />Review & Renew
                     </Button>
                   </div>
                 </>
               )}
 
-              {/* ── STEP 2: Payment details ──────────────────────────────── */}
-              {renewal.step === "payment" && (
-                <>
-                  <div className="flex items-center gap-2">
-                    <CreditCard className="w-4 h-4 text-gray-500" />
-                    <p className="text-sm font-semibold text-gray-700">Payment Details</p>
-                  </div>
-
-                  <div className="space-y-4">
-                    {/* Amount */}
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-medium text-gray-600">
-                        Amount <span className="text-red-500">*</span>
-                      </Label>
-                      <div className="relative">
-                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-400 font-medium">₱</span>
-                        <Input
-                          type="number" min="0.01" step="0.01" placeholder="0.00"
-                          value={renewal.payment.amount}
-                          onChange={e => setRenewal(prev => prev ? { ...prev, payment: { ...prev.payment, amount: e.target.value } } : null)}
-                          className="pl-7 font-mono"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Payment Method — pill buttons */}
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-medium text-gray-600">
-                        Payment Method <span className="text-red-500">*</span>
-                      </Label>
-                      <div className="grid grid-cols-4 gap-2">
-                        {(["cash", "gcash", "paymaya", "banktransfer"] as PaymentMethod[]).map(m => (
-                          <button
-                            key={m} type="button"
-                            onClick={() => setRenewal(prev => prev ? { ...prev, payment: { ...prev.payment, payment_method: m, reference_number: "" } } : null)}
-                            className={`rounded-lg border-2 py-2.5 text-xs font-semibold transition-all ${
-                              renewal.payment.payment_method === m
-                                ? "border-primary bg-primary/5 text-primary"
-                                : "border-gray-200 text-gray-600 hover:border-gray-300"
-                            }`}
-                          >
-                            {PAYMENT_METHOD_LABELS[m]}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Reference number — only for non-cash */}
-                    {needsReference && (
-                      <div className="space-y-1.5">
-                        <Label className="text-xs font-medium text-gray-600">
-                          Reference Number <span className="text-red-500">*</span>
-                          <span className="text-gray-400 font-normal ml-1">
-                            ({PAYMENT_METHOD_LABELS[renewal.payment.payment_method as PaymentMethod]} ref)
-                          </span>
-                        </Label>
-                        <Input
-                          placeholder="Transaction reference number"
-                          value={renewal.payment.reference_number}
-                          onChange={e => setRenewal(prev => prev ? { ...prev, payment: { ...prev.payment, reference_number: e.target.value } } : null)}
-                          className="font-mono"
-                        />
-                      </div>
-                    )}
-
-                    {/* Payment For — pill buttons */}
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-medium text-gray-600">
-                        Payment For <span className="text-red-500">*</span>
-                      </Label>
-                      <div className="grid grid-cols-2 gap-2">
-                        {(["membership", "coaching", "both", "other"] as PaymentFor[]).map(pf => (
-                          <button
-                            key={pf} type="button"
-                            onClick={() => setRenewal(prev => prev ? { ...prev, payment: { ...prev.payment, payment_for: pf } } : null)}
-                            className={`rounded-lg border-2 py-2.5 text-xs font-semibold transition-all ${
-                              renewal.payment.payment_for === pf
-                                ? "border-primary bg-primary/5 text-primary"
-                                : "border-gray-200 text-gray-600 hover:border-gray-300"
-                            }`}
-                          >
-                            {PAYMENT_FOR_LABELS[pf]}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Notes */}
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-medium text-gray-600">
-                        Notes <span className="text-gray-400 font-normal">(optional)</span>
-                      </Label>
-                      <Textarea
-                        placeholder="Any additional notes..."
-                        value={renewal.payment.notes}
-                        onChange={e => setRenewal(prev => prev ? { ...prev, payment: { ...prev.payment, notes: e.target.value } } : null)}
-                        className="resize-none text-sm" rows={2}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex gap-3 pt-1">
-                    <Button variant="outline" className="flex-1" onClick={() => setRenewal(prev => prev ? { ...prev, step: "select" } : null)}>
-                      Back
-                    </Button>
-                    <Button className="flex-1" disabled={!isPaymentValid} onClick={() => setRenewal(prev => prev ? { ...prev, step: "confirm" } : null)}>
-                      <Receipt className="w-4 h-4 mr-2" />Review & Confirm
-                    </Button>
-                  </div>
-                </>
-              )}
-
-              {/* ── STEP 3: Confirm ──────────────────────────────────────── */}
+              {/* ── STEP 2: Confirm summary ── */}
               {renewal.step === "confirm" && selectedPlanObj && (
                 <>
-                  <p className="text-sm text-gray-500">Review the details before confirming.</p>
-
-                  {/* Subscription row */}
-                  <div className="rounded-xl border divide-y text-sm overflow-hidden">
-                    <div className="px-4 py-2 bg-gray-50">
-                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Subscription</p>
+                  <div className="rounded-xl bg-gray-50 border divide-y text-sm">
+                    <div className="flex justify-between px-4 py-3">
+                      <span className="text-gray-500">Member</span>
+                      <span className="font-semibold">{renewal.user.name}</span>
                     </div>
-                    <div className="px-4 py-2.5 flex justify-between"><span className="text-gray-500">Member</span><span className="font-semibold">{renewal.user.name}</span></div>
-                    <div className="px-4 py-2.5 flex justify-between"><span className="text-gray-500">Plan</span><span className="font-semibold">{selectedPlanObj.label}</span></div>
-                    <div className="px-4 py-2.5 flex justify-between"><span className="text-gray-500">New Expiry</span><span className="font-semibold">{renewalNewEnd?.toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" })}</span></div>
+                    <div className="flex justify-between px-4 py-3">
+                      <span className="text-gray-500">Plan</span>
+                      <span className="font-semibold">{selectedPlanObj.label}</span>
+                    </div>
+                    <div className="flex justify-between px-4 py-3">
+                      <span className="text-gray-500">Amount</span>
+                      <span className="font-semibold text-green-700">
+                        ₱{parseFloat(renewal.prices[renewal.selectedPlan!] || "0")
+                          .toLocaleString("en-PH", { minimumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                    <div className="flex justify-between px-4 py-3">
+                      <span className="text-gray-500">Method</span>
+                      <span className="font-semibold">
+                        {PAYMENT_METHOD_LABELS[renewal.paymentForm.payment_method as PaymentMethod]}
+                      </span>
+                    </div>
+                    <div className="flex justify-between px-4 py-3">
+                      <span className="text-gray-500">For</span>
+                      <span className="font-semibold">
+                        {PAYMENT_FOR_LABELS[renewal.paymentForm.payment_for as PaymentFor]}
+                      </span>
+                    </div>
+                    {renewal.paymentForm.reference_number && (
+                      <div className="flex justify-between px-4 py-3">
+                        <span className="text-gray-500">Ref #</span>
+                        <span className="font-semibold font-mono">{renewal.paymentForm.reference_number}</span>
+                      </div>
+                    )}
+                    {renewal.paymentForm.notes && (
+                      <div className="flex justify-between px-4 py-3 gap-4">
+                        <span className="text-gray-500 shrink-0">Notes</span>
+                        <span className="font-semibold text-right">{renewal.paymentForm.notes}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between px-4 py-3">
+                      <span className="text-gray-500">New Expiry</span>
+                      <span className="font-semibold">
+                        {renewalNewEnd?.toLocaleDateString("en-PH", {
+                          year: "numeric", month: "long", day: "numeric",
+                        })}
+                      </span>
+                    </div>
                   </div>
 
-                  {/* Payment row */}
-                  <div className="rounded-xl border border-green-100 divide-y text-sm overflow-hidden">
-                    <div className="px-4 py-2 bg-green-50">
-                      <p className="text-xs font-semibold text-green-700 uppercase tracking-wide flex items-center gap-1.5">
-                        <CreditCard className="w-3.5 h-3.5" />Payment
-                      </p>
-                    </div>
-                    <div className="px-4 py-2.5 flex justify-between"><span className="text-gray-500">Amount</span><span className="font-bold text-green-700">₱{parseFloat(renewal.payment.amount || "0").toLocaleString("en-PH", { minimumFractionDigits: 2 })}</span></div>
-                    <div className="px-4 py-2.5 flex justify-between"><span className="text-gray-500">Method</span><span className="font-semibold">{PAYMENT_METHOD_LABELS[renewal.payment.payment_method as PaymentMethod]}</span></div>
-                    <div className="px-4 py-2.5 flex justify-between"><span className="text-gray-500">For</span><span className="font-semibold">{PAYMENT_FOR_LABELS[renewal.payment.payment_for as PaymentFor]}</span></div>
-                    {renewal.payment.reference_number && (
-                      <div className="px-4 py-2.5 flex justify-between"><span className="text-gray-500">Reference</span><span className="font-mono font-semibold">{renewal.payment.reference_number}</span></div>
-                    )}
-                    {renewal.payment.notes && (
-                      <div className="px-4 py-2.5 flex justify-between gap-4"><span className="text-gray-500 shrink-0">Notes</span><span className="text-right text-gray-700">{renewal.payment.notes}</span></div>
-                    )}
-                  </div>
+                  <p className="text-sm text-gray-500 text-center">
+                    Confirm to activate the plan and record the payment.
+                  </p>
 
-                  <div className="flex gap-3 pt-1">
-                    <Button variant="outline" className="flex-1" onClick={() => setRenewal(prev => prev ? { ...prev, step: "payment" } : null)} disabled={renewal.isProcessing}>
+                  <div className="flex gap-3">
+                    <Button
+                      variant="outline"
+                      className="flex-1"
+                      onClick={() => setRenewal(prev => prev ? { ...prev, step: "select" } : null)}
+                      disabled={renewal.isProcessing}
+                    >
                       Back
                     </Button>
-                    <Button className="flex-1 bg-green-600 hover:bg-green-700" onClick={handleRenewConfirm} disabled={renewal.isProcessing}>
-                      {renewal.isProcessing ? "Processing…" : "Confirm Renewal"}
+                    <Button
+                      className="flex-1 bg-green-600 hover:bg-green-700"
+                      onClick={handleRenewConfirm}
+                      disabled={renewal.isProcessing}
+                    >
+                      {renewal.isProcessing ? "Processing…" : "Confirm & Save Payment"}
                     </Button>
                   </div>
                 </>
               )}
 
-              {/* ── STEP 4: Check-in prompt ───────────────────────────────── */}
+              {/* ── STEP 3: Check-in prompt ── */}
               {renewal.step === "check-in" && (
                 <>
                   <div className="flex flex-col items-center gap-3 py-2">
                     <div className="p-3 rounded-full bg-green-100">
                       <CheckCircle2 className="w-8 h-8 text-green-600" />
                     </div>
-                    <h3 className="text-lg font-bold text-green-700">Renewal Successful!</h3>
+                    <h3 className="text-lg font-bold text-green-700">Renewal &amp; Payment Saved!</h3>
                     <p className="text-sm text-gray-600 text-center">
-                      <span className="font-semibold">{renewal.user.name}</span>'s membership is active until{" "}
-                      <span className="font-semibold">{renewal.subscription ? formatDate(renewal.subscription.endDate) : "—"}</span>.
+                      <span className="font-semibold">{renewal.user.name}</span>'s membership is now active
+                      until{" "}
+                      <span className="font-semibold">
+                        {renewal.subscription ? formatDate(renewal.subscription.endDate) : "—"}
+                      </span>.
                     </p>
-                    <div className="rounded-lg bg-gray-50 border px-4 py-2 text-xs text-center text-gray-500 w-full">
-                      Payment of{" "}
-                      <span className="font-semibold text-green-700">
-                        ₱{parseFloat(renewal.payment.amount || "0").toLocaleString("en-PH", { minimumFractionDigits: 2 })}
-                      </span>{" "}
-                      via <span className="font-semibold">{PAYMENT_METHOD_LABELS[renewal.payment.payment_method as PaymentMethod]}</span> recorded.
-                    </div>
-                    <p className="text-sm text-gray-500">Would you like to check them in now?</p>
+                    <p className="text-sm text-gray-500 mt-1">Would you like to check them in now?</p>
                   </div>
                   <div className="flex gap-3">
-                    <Button variant="outline" className="flex-1" onClick={closeRenewal}>Not Now</Button>
+                    <Button variant="outline" className="flex-1" onClick={closeRenewal}>
+                      Not Now
+                    </Button>
                     <Button className="flex-1" onClick={handleCheckInAfterRenewal}>
                       <CheckCircle2 className="w-4 h-4 mr-2" />Check In
                     </Button>
