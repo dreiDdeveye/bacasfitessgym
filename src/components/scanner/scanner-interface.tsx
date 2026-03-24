@@ -51,27 +51,36 @@ import {
   startOfMonth,
   startOfYear,
   addMonths,
+  addDays,
 } from "date-fns"
 
 const SCAN_COOLDOWN_SECONDS = 60
 
-// ─── Renewal plan config ──────────────────────────────────────────────────────
+// ─── Payment types ────────────────────────────────────────────────────────────
 type PaymentMethod = "cash" | "gcash" | "paymaya" | "banktransfer"
 type PaymentFor    = "membership" | "coaching" | "both" | "other"
 
+// ─── Renewal plan config ──────────────────────────────────────────────────────
+type RenewalPlanId = "daily" | "walkin" | "1m" | "6m" | "1y"
+
 type RenewalPlan = {
-  id: "1m" | "6m" | "1y"
-  label: string
-  months: number
+  id:       RenewalPlanId
+  label:    string
+  sublabel: string
+  months?:  number
+  isDaily?: boolean
+  isWalkin?: boolean
 }
 
 const RENEWAL_PLANS: RenewalPlan[] = [
-  { id: "1m",  label: "1 Month",  months: 1  },
-  { id: "6m",  label: "6 Months", months: 6  },
-  { id: "1y",  label: "1 Year",   months: 12 },
+  { id: "daily",  label: "Daily",    sublabel: "Expires at midnight today", isDaily:  true },
+  { id: "walkin", label: "Walk-in",  sublabel: "Custom end date",           isWalkin: true },
+  { id: "1m",     label: "1 Month",  sublabel: "30-day access",             months: 1  },
+  { id: "6m",     label: "6 Months", sublabel: "6-month access",            months: 6  },
+  { id: "1y",     label: "1 Year",   sublabel: "Full year access",          months: 12 },
 ]
 
-type PlanPrices = Record<RenewalPlan["id"], string>
+type PlanPrices = Record<RenewalPlanId, string>
 
 type PaymentForm = {
   payment_method:   PaymentMethod | ""
@@ -81,14 +90,15 @@ type PaymentForm = {
 }
 
 type RenewalState = {
-  user:         UserType
-  subscription: Subscription | null
-  prices:       PlanPrices
-  selectedPlan: RenewalPlan["id"] | null
-  paymentForm:  PaymentForm
-  step:         "select" | "confirm" | "check-in"
-  isProcessing: boolean
-  paymentError: string
+  user:          UserType
+  subscription:  Subscription | null
+  prices:        PlanPrices
+  selectedPlan:  RenewalPlanId | null
+  customEndDate: string
+  paymentForm:   PaymentForm
+  step:          "select" | "confirm" | "check-in"
+  isProcessing:  boolean
+  paymentError:  string
 }
 
 // ─── Other types ──────────────────────────────────────────────────────────────
@@ -138,6 +148,19 @@ const PAYMENT_FOR_LABELS: Record<PaymentFor, string> = {
   other:      "Other",
 }
 
+// Compute end date based on plan type
+const computeNewEndDate = (plan: RenewalPlan, customEndDate: string): Date => {
+  const now = new Date()
+  if (plan.isDaily) {
+    // Midnight of the next day = end of today
+    return addDays(startOfDay(now), 1)
+  }
+  if (plan.isWalkin) {
+    return new Date(customEndDate)
+  }
+  return addMonths(now, plan.months ?? 1)
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 export function ScannerInterface() {
   const [lastScan, setLastScan] = useState<ScanResult | null>(null)
@@ -175,12 +198,13 @@ export function ScannerInterface() {
     setRenewal({
       user,
       subscription,
-      prices:       { "1m": "", "6m": "", "1y": "" },
-      selectedPlan: null,
-      paymentForm:  emptyPaymentForm(),
-      step:         "select",
-      isProcessing: false,
-      paymentError: "",
+      prices:        { daily: "", walkin: "", "1m": "", "6m": "", "1y": "" },
+      selectedPlan:  null,
+      customEndDate: "",
+      paymentForm:   emptyPaymentForm(),
+      step:          "select",
+      isProcessing:  false,
+      paymentError:  "",
     })
     setLastScan(null)
   }
@@ -202,6 +226,11 @@ export function ScannerInterface() {
       return "Please select a plan."
     if (!renewal.prices[renewal.selectedPlan] || parseFloat(renewal.prices[renewal.selectedPlan]) <= 0)
       return "Please enter a valid price for the selected plan."
+    const plan = RENEWAL_PLANS.find(p => p.id === renewal.selectedPlan)
+    if (plan?.isWalkin && !renewal.customEndDate)
+      return "Please select an end date for the walk-in plan."
+    if (plan?.isWalkin && new Date(renewal.customEndDate) <= new Date())
+      return "Walk-in end date must be in the future."
     if (!renewal.paymentForm.payment_method)
       return "Please select a payment method."
     if (!renewal.paymentForm.payment_for)
@@ -223,7 +252,7 @@ export function ScannerInterface() {
 
     const plan   = RENEWAL_PLANS.find(p => p.id === renewal.selectedPlan)!
     const now    = new Date()
-    const newEnd = addMonths(now, plan.months)
+    const newEnd = computeNewEndDate(plan, renewal.customEndDate)
     const amount = parseFloat(renewal.prices[renewal.selectedPlan])
 
     // 1. Update subscription
@@ -237,7 +266,7 @@ export function ScannerInterface() {
 
     await storageService.addOrUpdateSubscription(updatedSub)
 
-    // 2. Save payment record — mapped to the Payment camelCase type
+    // 2. Save payment record
     const nowIso = now.toISOString()
     await storageService.addPayment({
       paymentId:       generateId(),
@@ -271,6 +300,11 @@ export function ScannerInterface() {
   const formatDate = (date?: string) => {
     if (!date) return "—"
     return new Date(date).toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" })
+  }
+
+  const formatDateComputed = (d: Date | null) => {
+    if (!d || isNaN(d.getTime())) return "—"
+    return d.toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" })
   }
 
   const getRemainingDays = (sub?: Subscription | null) => {
@@ -533,7 +567,16 @@ export function ScannerInterface() {
   const filteredWalkinCount  = membersWithStats.filter(m => m.membershipType === "walkin").length
 
   const selectedPlanObj = renewal ? RENEWAL_PLANS.find(p => p.id === renewal.selectedPlan) : null
-  const renewalNewEnd   = selectedPlanObj ? addMonths(new Date(), selectedPlanObj.months) : null
+  const renewalNewEnd   = selectedPlanObj
+    ? computeNewEndDate(selectedPlanObj, renewal?.customEndDate ?? "")
+    : null
+
+  // Minimum date for walk-in picker (tomorrow)
+  const minWalkinDate = (() => {
+    const d = new Date()
+    d.setDate(d.getDate() + 1)
+    return d.toISOString().split("T")[0]
+  })()
 
   // ── Render ───────────────────────────────────────────────────────────────
   return (
@@ -839,50 +882,86 @@ export function ScannerInterface() {
                   </p>
 
                   {/* Plan rows */}
-                  <div className="space-y-3">
+                  <div className="space-y-2">
                     {RENEWAL_PLANS.map(plan => (
-                      <div
-                        key={plan.id}
-                        onClick={() =>
-                          setRenewal(prev => prev ? { ...prev, selectedPlan: plan.id, paymentError: "" } : null)
-                        }
-                        className={`flex items-center justify-between gap-4 rounded-xl border-2 p-4 cursor-pointer transition-all ${
-                          renewal.selectedPlan === plan.id
-                            ? "border-primary bg-primary/5"
-                            : "border-gray-200 hover:border-gray-300"
-                        }`}
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
-                            renewal.selectedPlan === plan.id ? "border-primary" : "border-gray-300"
-                          }`}>
-                            {renewal.selectedPlan === plan.id && (
-                              <div className="w-2 h-2 rounded-full bg-primary" />
-                            )}
-                          </div>
-                          <span className="font-semibold text-gray-800">{plan.label}</span>
-                        </div>
-                        {/* Price input per plan */}
+                      <div key={plan.id}>
                         <div
-                          className="flex items-center gap-1.5"
-                          onClick={e => e.stopPropagation()}
+                          onClick={() =>
+                            setRenewal(prev =>
+                              prev
+                                ? { ...prev, selectedPlan: plan.id, customEndDate: "", paymentError: "" }
+                                : null
+                            )
+                          }
+                          className={`flex items-center justify-between gap-4 rounded-xl border-2 p-4 cursor-pointer transition-all ${
+                            renewal.selectedPlan === plan.id
+                              ? "border-primary bg-primary/5"
+                              : "border-gray-200 hover:border-gray-300"
+                          }`}
                         >
-                          <span className="text-sm font-medium text-gray-500">₱</span>
-                          <Input
-                            type="number"
-                            min="0"
-                            placeholder="0.00"
-                            value={renewal.prices[plan.id]}
-                            onChange={e =>
-                              setRenewal(prev =>
-                                prev
-                                  ? { ...prev, prices: { ...prev.prices, [plan.id]: e.target.value }, paymentError: "" }
-                                  : null
-                              )
-                            }
-                            className="w-28 text-right font-mono"
-                          />
+                          {/* Radio + label */}
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className={`w-4 h-4 shrink-0 rounded-full border-2 flex items-center justify-center ${
+                              renewal.selectedPlan === plan.id ? "border-primary" : "border-gray-300"
+                            }`}>
+                              {renewal.selectedPlan === plan.id && (
+                                <div className="w-2 h-2 rounded-full bg-primary" />
+                              )}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="font-semibold text-gray-800 leading-tight">{plan.label}</p>
+                              <p className="text-xs text-gray-400 leading-tight">{plan.sublabel}</p>
+                            </div>
+                          </div>
+
+                          {/* Price input */}
+                          <div
+                            className="flex items-center gap-1.5 shrink-0"
+                            onClick={e => e.stopPropagation()}
+                          >
+                            <span className="text-sm font-medium text-gray-500">₱</span>
+                            <Input
+                              type="number"
+                              min="0"
+                              placeholder="0.00"
+                              value={renewal.prices[plan.id]}
+                              onChange={e =>
+                                setRenewal(prev =>
+                                  prev
+                                    ? {
+                                        ...prev,
+                                        prices: { ...prev.prices, [plan.id]: e.target.value },
+                                        paymentError: "",
+                                      }
+                                    : null
+                                )
+                              }
+                              className="w-28 text-right font-mono"
+                            />
+                          </div>
                         </div>
+
+                        {/* Walk-in custom end date — shown inline below when selected */}
+                        {plan.isWalkin && renewal.selectedPlan === "walkin" && (
+                          <div className="mt-2 ml-4 flex items-center gap-3">
+                            <Label className="text-sm font-medium text-gray-700 whitespace-nowrap shrink-0">
+                              End Date <span className="text-red-500">*</span>
+                            </Label>
+                            <Input
+                              type="date"
+                              min={minWalkinDate}
+                              value={renewal.customEndDate}
+                              onChange={e =>
+                                setRenewal(prev =>
+                                  prev
+                                    ? { ...prev, customEndDate: e.target.value, paymentError: "" }
+                                    : null
+                                )
+                              }
+                              className="flex-1"
+                            />
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -1044,11 +1123,7 @@ export function ScannerInterface() {
                     )}
                     <div className="flex justify-between px-4 py-3">
                       <span className="text-gray-500">New Expiry</span>
-                      <span className="font-semibold">
-                        {renewalNewEnd?.toLocaleDateString("en-PH", {
-                          year: "numeric", month: "long", day: "numeric",
-                        })}
-                      </span>
+                      <span className="font-semibold">{formatDateComputed(renewalNewEnd)}</span>
                     </div>
                   </div>
 
