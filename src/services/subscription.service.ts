@@ -3,6 +3,10 @@
 import type { Subscription, AccessValidation } from "@/src/types"
 import * as storage from "./storage.service"
 
+function getMonthlyPlanDuration(durationMonths: number): string {
+  return `${durationMonths} ${durationMonths === 1 ? "month" : "months"}`
+}
+
 /* ================= ACTIVE CHECK ================= */
 export function isSubscriptionActive(
   subscription: Subscription | null
@@ -18,7 +22,8 @@ export function isSubscriptionActive(
 /* ================= CREATE REGULAR SUB ================= */
 export function createSubscription(
   userId: string,
-  durationMonths = 1
+  durationMonths = 1,
+  membershipType: Subscription["membershipType"] = "new"
 ): Subscription {
   const now = new Date()
   const endDate = new Date(now)
@@ -29,6 +34,8 @@ export function createSubscription(
     startDate: now.toISOString(),
     endDate: endDate.toISOString(),
     status: "active",
+    planDuration: getMonthlyPlanDuration(durationMonths),
+    membershipType,
     createdAt: now.toISOString(),
   }
 }
@@ -36,7 +43,8 @@ export function createSubscription(
 /* ================= CREATE DAILY SUB ================= */
 export function createDailySubscription(
   userId: string,
-  startDate?: Date
+  startDate?: Date,
+  membershipType: Subscription["membershipType"] = "new"
 ): Subscription {
   const start = startDate ? new Date(startDate) : new Date()
   const end = new Date(start)
@@ -50,6 +58,8 @@ export function createDailySubscription(
     startDate: start.toISOString(),
     endDate: end.toISOString(),
     status: "active",
+    planDuration: "daily",
+    membershipType,
     createdAt: new Date().toISOString(),
   }
 }
@@ -96,7 +106,7 @@ export async function renewSubscription(
   userId: string,
   durationMonths = 1
 ): Promise<Subscription> {
-  const subscription = createSubscription(userId, durationMonths)
+  const subscription = createSubscription(userId, durationMonths, "renewal")
   await storage.addOrUpdateSubscription(subscription)
   return subscription
 }
@@ -120,6 +130,8 @@ export async function renewWalkIn(
     startDate: start.toISOString(),
     endDate: end.toISOString(),
     status: "active",
+    planDuration: "walk-in",
+    membershipType: "walk-in",
     createdAt: new Date().toISOString(),
   }
 
@@ -132,7 +144,7 @@ export async function renewDaily(
   userId: string,
   startDate?: Date
 ): Promise<Subscription> {
-  const subscription = createDailySubscription(userId, startDate)
+  const subscription = createDailySubscription(userId, startDate, "renewal")
   await storage.addOrUpdateSubscription(subscription)
   return subscription
 }

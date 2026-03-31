@@ -156,9 +156,30 @@ const computeNewEndDate = (plan: RenewalPlan, customEndDate: string): Date => {
     return addDays(startOfDay(now), 1)
   }
   if (plan.isWalkin) {
-    return new Date(customEndDate)
+    const endDate = new Date(customEndDate)
+    endDate.setHours(23, 59, 59, 999)
+    return endDate
   }
   return addMonths(now, plan.months ?? 1)
+}
+
+const getSubscriptionMetadataForPlan = (
+  plan: RenewalPlan
+): Pick<Subscription, "planDuration" | "membershipType"> => {
+  if (plan.isDaily) {
+    return { planDuration: "daily", membershipType: "renewal" }
+  }
+  if (plan.isWalkin) {
+    return { planDuration: "walk-in", membershipType: "walk-in" }
+  }
+  if (plan.months === 12) {
+    return { planDuration: "12 months", membershipType: "renewal" }
+  }
+
+  return {
+    planDuration: `${plan.months ?? 1} ${(plan.months ?? 1) === 1 ? "month" : "months"}`,
+    membershipType: "renewal",
+  }
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -252,22 +273,29 @@ export function ScannerInterface() {
 
     const plan   = RENEWAL_PLANS.find(p => p.id === renewal.selectedPlan)!
     const now    = new Date()
+    const nowIso = now.toISOString()
     const newEnd = computeNewEndDate(plan, renewal.customEndDate)
     const amount = parseFloat(renewal.prices[renewal.selectedPlan])
+    const currentSubscription = renewal.subscription
+    const { planDuration, membershipType } = getSubscriptionMetadataForPlan(plan)
 
     // 1. Update subscription
     const updatedSub: Subscription = {
-      ...(renewal.subscription ?? {}),
-      userId:    renewal.user.userId,
-      startDate: now.toISOString(),
-      endDate:   newEnd.toISOString(),
-      planId:    plan.id,
-    } as Subscription
+      userId: renewal.user.userId,
+      startDate: nowIso,
+      endDate: newEnd.toISOString(),
+      status: "active",
+      planDuration,
+      membershipType,
+      coachingPreference: currentSubscription?.coachingPreference ?? false,
+      paymentStatus: "paid",
+      paymentDate: nowIso,
+      createdAt: currentSubscription?.createdAt ?? nowIso,
+    }
 
     await storageService.addOrUpdateSubscription(updatedSub)
 
     // 2. Save payment record
-    const nowIso = now.toISOString()
     await storageService.addPayment({
       paymentId:       generateId(),
       userId:          renewal.user.userId,

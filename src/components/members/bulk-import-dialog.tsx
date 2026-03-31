@@ -78,8 +78,8 @@ export function BulkImportDialog({
 
         return [
           escapeCSV(user.name),
-          escapeCSV(user.phone),
-          escapeCSV(user.email),
+          escapeCSV(user.phone || ""),
+          escapeCSV(user.email || ""),
           escapeCSV(startDate),
           escapeCSV(endDate),
         ].join(",")

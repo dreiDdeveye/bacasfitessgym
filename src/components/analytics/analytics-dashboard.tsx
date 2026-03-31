@@ -144,13 +144,32 @@ const PLAN_COLORS: Record<PlanKey, string> = {
 
 function getPlanKey(sub: Subscription | undefined | null): PlanKey {
   if (!sub) return "other"
-  const dur  = (sub.planDuration || "").toLowerCase()
-  const type = (sub.membershipType || "").toLowerCase()
-  if (dur.includes("1 month") || dur === "1month") return "1month"
-  if (dur.includes("6 month") || dur === "6months") return "6months"
-  if (dur.includes("1 year") || dur.includes("12 month") || dur === "1year") return "1year"
-  if (type === "walkin" || type === "walk-in" || type === "walk_in") return "walkin"
+  const normalize = (value?: string | null) => (value || "").toLowerCase().replace(/[\s_-]+/g, "")
+  const dur  = normalize(sub.planDuration)
+  const type = normalize(sub.membershipType)
+
+  if (dur === "daily") return "daily"
+  if (dur === "walkin") return "walkin"
+  if (dur === "1month" || dur === "1m") return "1month"
+  if (dur === "6months" || dur === "6m") return "6months"
+  if (dur === "12months" || dur === "12month" || dur === "1year" || dur === "1y") return "1year"
+  if (type === "walkin") return "walkin"
   if (type === "daily") return "daily"
+
+  const start = new Date(sub.startDate)
+  const end = new Date(sub.endDate)
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return "other"
+
+  const durationHours = (end.getTime() - start.getTime()) / (1000 * 60 * 60)
+  const monthDiff =
+    (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth())
+
+  if (end.getHours() === 0 && end.getMinutes() === 0 && durationHours <= 24) return "daily"
+  if (monthDiff === 1) return "1month"
+  if (monthDiff === 6) return "6months"
+  if (monthDiff === 12) return "1year"
+  if (durationHours > 0) return "walkin"
+
   return "other"
 }
 
