@@ -49,9 +49,8 @@ export function createDailySubscription(
   const start = startDate ? new Date(startDate) : new Date()
   const end = new Date(start)
 
-  // ALWAYS expire at 12:00 AM next day
-  end.setDate(start.getDate() + 1)
-  end.setHours(0, 0, 0, 0)
+  // Expire at the end of the same day.
+  end.setHours(23, 59, 59, 999)
 
   return {
     userId,

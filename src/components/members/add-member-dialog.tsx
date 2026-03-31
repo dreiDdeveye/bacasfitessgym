@@ -635,7 +635,7 @@ export default function AddMemberDialog({ open, onOpenChange, onMemberAdded }: A
                       />
                       <div className="space-y-2">
                         <Label>Expires</Label>
-                        <Input value="12:00 AM (Next Day)" disabled />
+                        <Input value="11:59 PM (Same Day)" disabled />
                       </div>
                     </div>
                   </>

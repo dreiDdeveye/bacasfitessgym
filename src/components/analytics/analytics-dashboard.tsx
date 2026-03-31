@@ -164,7 +164,9 @@ function getPlanKey(sub: Subscription | undefined | null): PlanKey {
   const monthDiff =
     (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth())
 
-  if (end.getHours() === 0 && end.getMinutes() === 0 && durationHours <= 24) return "daily"
+  const isEndOfDay =
+    end.getHours() === 23 && end.getMinutes() === 59 && end.getSeconds() === 59
+  if ((end.getHours() === 0 && end.getMinutes() === 0 && durationHours <= 24) || (isEndOfDay && durationHours <= 24)) return "daily"
   if (monthDiff === 1) return "1month"
   if (monthDiff === 6) return "6months"
   if (monthDiff === 12) return "1year"

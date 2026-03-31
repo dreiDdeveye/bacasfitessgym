@@ -73,7 +73,7 @@ type RenewalPlan = {
 }
 
 const RENEWAL_PLANS: RenewalPlan[] = [
-  { id: "daily",  label: "Daily",    sublabel: "Expires at midnight today", isDaily:  true },
+  { id: "daily",  label: "Daily",    sublabel: "Expires at 11:59 PM today", isDaily:  true },
   { id: "walkin", label: "Walk-in",  sublabel: "Custom end date",           isWalkin: true },
   { id: "1m",     label: "1 Month",  sublabel: "30-day access",             months: 1  },
   { id: "6m",     label: "6 Months", sublabel: "6-month access",            months: 6  },
@@ -152,8 +152,9 @@ const PAYMENT_FOR_LABELS: Record<PaymentFor, string> = {
 const computeNewEndDate = (plan: RenewalPlan, customEndDate: string): Date => {
   const now = new Date()
   if (plan.isDaily) {
-    // Midnight of the next day = end of today
-    return addDays(startOfDay(now), 1)
+    const endDate = new Date(now)
+    endDate.setHours(23, 59, 59, 999)
+    return endDate
   }
   if (plan.isWalkin) {
     const endDate = new Date(customEndDate)
@@ -250,8 +251,12 @@ export function ScannerInterface() {
     const plan = RENEWAL_PLANS.find(p => p.id === renewal.selectedPlan)
     if (plan?.isWalkin && !renewal.customEndDate)
       return "Please select an end date for the walk-in plan."
-    if (plan?.isWalkin && new Date(renewal.customEndDate) <= new Date())
-      return "Walk-in end date must be in the future."
+    if (plan?.isWalkin) {
+      const walkInEndDate = computeNewEndDate(plan, renewal.customEndDate)
+      if (Number.isNaN(walkInEndDate.getTime()) || walkInEndDate.getTime() <= Date.now()) {
+        return "Walk-in end date must be today or later."
+      }
+    }
     if (!renewal.paymentForm.payment_method)
       return "Please select a payment method."
     if (!renewal.paymentForm.payment_for)
@@ -365,10 +370,20 @@ export function ScannerInterface() {
 
   const getMembershipType = (subscription: Subscription | null): MembershipType => {
     if (!subscription) return "unknown"
+    const normalize = (value?: string | null) => (value || "").toLowerCase().replace(/[\s_-]+/g, "")
+    const planDuration = normalize(subscription.planDuration)
+    const membershipType = normalize(subscription.membershipType)
+    if (planDuration === "daily" || membershipType === "daily") return "daily"
+    if (planDuration === "walkin" || membershipType === "walkin") return "walkin"
+
     const start = new Date(subscription.startDate)
     const end   = new Date(subscription.endDate)
     const durationHours = (end.getTime() - start.getTime()) / (1000 * 60 * 60)
-    if (end.getHours() === 0 && end.getMinutes() === 0 && durationHours <= 24) return "daily"
+    const isEndOfDay =
+      end.getHours() === 23 && end.getMinutes() === 59 && end.getSeconds() === 59
+    if ((end.getHours() === 0 && end.getMinutes() === 0 && durationHours <= 24) || (isEndOfDay && durationHours <= 24)) {
+      return "daily"
+    }
     const months =
       (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth())
     if ([1, 6, 12].includes(months)) return "monthly"
@@ -599,10 +614,9 @@ export function ScannerInterface() {
     ? computeNewEndDate(selectedPlanObj, renewal?.customEndDate ?? "")
     : null
 
-  // Minimum date for walk-in picker (tomorrow)
+  // Minimum date for walk-in picker (today)
   const minWalkinDate = (() => {
     const d = new Date()
-    d.setDate(d.getDate() + 1)
     return d.toISOString().split("T")[0]
   })()
 

@@ -309,7 +309,7 @@ export function RenewMemberDialog({
                   </div>
                   <p className="text-xs text-muted-foreground mt-2">
                     This subscription will be valid for today only and expires
-                    at <span className="font-medium">12:00 AM (midnight)</span>.
+                    at <span className="font-medium">11:59 PM</span>.
                   </p>
                 </div>
               )}
