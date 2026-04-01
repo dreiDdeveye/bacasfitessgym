@@ -68,6 +68,64 @@ export function MemberList({ users, onUpdate }: MemberListProps) {
   const [subscriptionCache, setSubscriptionCache] =
     useState<Map<string, Subscription | null>>(new Map())
 
+  const normalizeValue = (value?: string | null) =>
+    (value || "").toLowerCase().replace(/[\s_-]+/g, "")
+
+  const getMembershipCategory = (
+    subscription: Subscription | null | undefined
+  ): "monthly" | "daily" | "walkin" | "unknown" => {
+    if (!subscription) return "unknown"
+
+    const planDuration = normalizeValue(subscription.planDuration)
+    const membershipType = normalizeValue(subscription.membershipType)
+
+    if (planDuration === "daily" || membershipType === "daily") return "daily"
+    if (planDuration === "walkin" || membershipType === "walkin") return "walkin"
+
+    const start = new Date(subscription.startDate)
+    const end = new Date(subscription.endDate)
+    const durationHours = (end.getTime() - start.getTime()) / (1000 * 60 * 60)
+    const isEndOfDay =
+      end.getHours() === 23 && end.getMinutes() === 59 && end.getSeconds() === 59
+
+    if (
+      (end.getHours() === 0 && end.getMinutes() === 0 && durationHours <= 24) ||
+      (isEndOfDay && durationHours <= 24)
+    ) {
+      return "daily"
+    }
+
+    const months =
+      (end.getFullYear() - start.getFullYear()) * 12 +
+      (end.getMonth() - start.getMonth())
+
+    if ([1, 6, 12].includes(months)) return "monthly"
+    return "walkin"
+  }
+
+  const matchesPlanFilter = (
+    subscription: Subscription | null | undefined,
+    filter: string
+  ) => {
+    if (filter === "all") return true
+
+    const planDuration = normalizeValue(subscription?.planDuration)
+
+    if (filter === "monthly") {
+      return getMembershipCategory(subscription) === "monthly"
+    }
+
+    if (filter === "daily") {
+      return getMembershipCategory(subscription) === "daily"
+    }
+
+    if (filter === "walk-in") {
+      return getMembershipCategory(subscription) === "walkin"
+    }
+
+    return planDuration === normalizeValue(filter)
+  }
+
   /* ---------------- OPTIMIZED SUBSCRIPTIONS CACHE ---------------- */
   useEffect(() => {
     const loadSubscriptions = async () => {
@@ -113,16 +171,7 @@ export function MemberList({ users, onUpdate }: MemberListProps) {
         if (statusFilter === "active" && !active) return false
         if (statusFilter === "expired" && active) return false
         
-        // Plan duration filter
-        if (planFilter !== "all") {
-          if (planFilter === "walk-in") {
-            // Filter for walk-ins (no planDuration)
-            if (sub?.planDuration) return false
-          } else {
-            // Filter for specific plan durations
-            if (!sub?.planDuration || sub.planDuration !== planFilter) return false
-          }
-        }
+        if (!matchesPlanFilter(sub, planFilter)) return false
         
         // Membership type filter
         if (membershipTypeFilter !== "all") {
@@ -163,6 +212,7 @@ export function MemberList({ users, onUpdate }: MemberListProps) {
       "6 months": "6 Months", 
       "12 months": "1 Year",
       "daily": "Daily",
+      "walk-in": "Walk-in",
     }
     
     return planMap[planDuration] || planDuration
@@ -298,6 +348,7 @@ export function MemberList({ users, onUpdate }: MemberListProps) {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Plans</SelectItem>
+            <SelectItem value="monthly">Monthly</SelectItem>
             <SelectItem value="1 month">1 Month</SelectItem>
             <SelectItem value="6 months">6 Months</SelectItem>
             <SelectItem value="12 months">1 Year</SelectItem>

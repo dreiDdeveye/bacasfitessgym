@@ -473,10 +473,9 @@ export function ScannerInterface() {
       setActiveSessions(sessions.length)
       setTodayCheckIns(logs.filter(l => l.action === "check-in").length)
       setTotalMembers(users.length)
-      const subscriptionMap = new Map(allSubscriptions.map(sub => [sub.userId, sub]))
       let monthly = 0, daily = 0, walkin = 0
-      for (const user of users) {
-        const type = getMembershipType(subscriptionMap.get(user.userId) || null)
+      for (const subscription of allSubscriptions) {
+        const type = getMembershipType(subscription)
         if (type === "monthly") monthly++
         else if (type === "daily") daily++
         else if (type === "walkin") walkin++
