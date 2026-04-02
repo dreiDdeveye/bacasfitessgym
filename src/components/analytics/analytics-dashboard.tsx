@@ -287,6 +287,9 @@ export function AnalyticsDashboard() {
   const [userMap, setUserMap]                       = useState<Map<string, string>>(new Map())
   const [subMap, setSubMap]                         = useState<Map<string, Subscription>>(new Map())
   const [recentTransactions, setRecentTransactions] = useState<RevenueTransaction[]>([])
+  const [detailYear, setDetailYear]                 = useState<number>(new Date().getFullYear())
+  const [detailMonth, setDetailMonth]               = useState<number>(-1) // -1 = all months
+  const [detailWeek, setDetailWeek]                 = useState<number>(0)  // 0 = all weeks
 
   // ── Effects ───────────────────────────────────────────────────────────────
   useEffect(() => { loadAnalytics() }, [])
@@ -306,7 +309,118 @@ export function AnalyticsDashboard() {
   useEffect(() => {
     if (allPayments.length === 0) return
     computeRevenue()
-  }, [revenueRange, revenueMethodFilter, revenuePlanFilter, allPayments, subMap, barYear, barMonth, barWeek])
+  }, [revenueRange, revenueMethodFilter, revenuePlanFilter, allPayments, subMap, barYear, barMonth, barWeek, detailYear, detailMonth, detailWeek])
+
+  function renderRevenueDateControls() {
+    return (
+      <div className="flex flex-wrap gap-2 items-center">
+        {(revenueRange === "year" || revenueRange === "month" || revenueRange === "week") && (
+          <select value={barYear} onChange={e => { setBarYear(Number(e.target.value)); setBarWeek(0) }}
+            className="border border-zinc-700 rounded px-2 py-1 bg-zinc-800 text-xs">
+            {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i).map(y => (
+              <option key={y} value={y}>{y}</option>
+            ))}
+          </select>
+        )}
+
+        {revenueRange === "month" && (
+          <select value={barMonth} onChange={e => { setBarMonth(Number(e.target.value)); setBarWeek(0) }}
+            className="border border-zinc-700 rounded px-2 py-1 bg-zinc-800 text-xs">
+            {MONTH_SHORT.map((m, i) => <option key={i} value={i}>{m}</option>)}
+          </select>
+        )}
+
+        {revenueRange === "month" && (
+          <select value={barWeek} onChange={e => setBarWeek(Number(e.target.value))}
+            className="border border-zinc-700 rounded px-2 py-1 bg-zinc-800 text-xs">
+            <option value={0}>All Weeks</option>
+            {Array.from({ length: Math.ceil(new Date(barYear, barMonth + 1, 0).getDate() / 7) }, (_, i) => {
+              const start = i * 7 + 1
+              const end   = Math.min(start + 6, new Date(barYear, barMonth + 1, 0).getDate())
+              return <option key={i+1} value={i+1}>Week {i+1} (Day {start}–{end})</option>
+            })}
+          </select>
+        )}
+
+        {revenueRange === "week" && (
+          <select value={barWeek} onChange={e => setBarWeek(Number(e.target.value))}
+            className="border border-zinc-700 rounded px-2 py-1 bg-zinc-800 text-xs min-w-[150px]">
+            {Array.from({ length: 52 }, (_, i) => {
+              const d = new Date(barYear, 0, 1 + i * 7)
+              const end = new Date(d.getTime() + 6 * 24 * 60 * 60 * 1000)
+              const fmt = (dt: Date) => `${MONTH_SHORT[dt.getMonth()]} ${dt.getDate()}`
+              return <option key={i} value={i}>Week {i+1} ({fmt(d)} – {fmt(end)})</option>
+            })}
+          </select>
+        )}
+      </div>
+    )
+  }
+
+  function getRevenueScopeLabel() {
+    switch (revenueRange) {
+      case "today":
+        return "today"
+      case "week":
+        return `week ${barWeek + 1} of ${barYear}`
+      case "month":
+        return barWeek === 0
+          ? `${MONTH_SHORT[barMonth]} ${barYear}`
+          : `${MONTH_SHORT[barMonth]} ${barYear} · week ${barWeek}`
+      case "year":
+        return String(barYear)
+    }
+  }
+
+  function renderRevenueDetailControls() {
+    const detailWeeks =
+      detailMonth === -1
+        ? []
+        : Array.from({ length: Math.ceil(new Date(detailYear, detailMonth + 1, 0).getDate() / 7) }, (_, i) => {
+            const start = i * 7 + 1
+            const end = Math.min(start + 6, new Date(detailYear, detailMonth + 1, 0).getDate())
+            return { value: i + 1, label: `Week ${i + 1} (Day ${start}–${end})` }
+          })
+
+    return (
+      <div className="flex flex-wrap gap-2 items-center">
+        <div className="flex items-center gap-1">
+          <span className="text-xs text-muted-foreground">Year</span>
+          <select value={detailYear} onChange={e => { setDetailYear(Number(e.target.value)); setDetailWeek(0) }}
+            className="border border-zinc-700 rounded px-2 py-1 bg-zinc-800 text-xs">
+            {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i).map(y => (
+              <option key={y} value={y}>{y}</option>
+            ))}
+          </select>
+        </div>
+        <div className="flex items-center gap-1">
+          <span className="text-xs text-muted-foreground">Month</span>
+          <select value={detailMonth} onChange={e => { setDetailMonth(Number(e.target.value)); setDetailWeek(0) }}
+            className="border border-zinc-700 rounded px-2 py-1 bg-zinc-800 text-xs">
+            <option value={-1}>All Months</option>
+            {MONTH_SHORT.map((m, i) => <option key={i} value={i}>{m}</option>)}
+          </select>
+        </div>
+        <div className="flex items-center gap-1">
+          <span className="text-xs text-muted-foreground">Week</span>
+          <select value={detailWeek} onChange={e => setDetailWeek(Number(e.target.value))}
+            disabled={detailMonth === -1}
+            className="border border-zinc-700 rounded px-2 py-1 bg-zinc-800 text-xs disabled:opacity-50 disabled:cursor-not-allowed">
+            <option value={0}>All Weeks</option>
+            {detailWeeks.map(week => (
+              <option key={week.value} value={week.value}>{week.label}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+    )
+  }
+
+  function getRevenueDetailScopeLabel() {
+    if (detailMonth === -1) return String(detailYear)
+    if (detailWeek === 0) return `${MONTH_SHORT[detailMonth]} ${detailYear}`
+    return `${MONTH_SHORT[detailMonth]} ${detailYear} · week ${detailWeek}`
+  }
 
   // ── Attendance: time-range filtered ──────────────────────────────────────
   function computeFilteredAttendance() {
@@ -372,6 +486,64 @@ export function AnalyticsDashboard() {
     const sum = (payments: Payment[]) => payments.reduce((s, p) => s + (p.amount || 0), 0)
     const filterMethod = (p: Payment) => revenueMethodFilter === "all" || (p.paymentMethod as string) === revenueMethodFilter
     const filterPlan   = (p: Payment) => revenuePlanFilter === "all" || getPlanKey(subMap.get(p.userId)) === revenuePlanFilter
+    const getWeekScope = () => {
+      const weekStart = new Date(barYear, 0, 1 + barWeek * 7)
+      const weekEnd = new Date(weekStart.getTime() + 6 * 24 * 60 * 60 * 1000)
+      const startStr = `${weekStart.getFullYear()}-${String(weekStart.getMonth()+1).padStart(2,"0")}-${String(weekStart.getDate()).padStart(2,"0")}`
+      const endStr = `${weekEnd.getFullYear()}-${String(weekEnd.getMonth()+1).padStart(2,"0")}-${String(weekEnd.getDate()).padStart(2,"0")}`
+      return { startStr, endStr }
+    }
+    const getMonthScopeDays = () => {
+      const daysInBarMonth = new Date(barYear, barMonth + 1, 0).getDate()
+      const allDays = Array.from({ length: daysInBarMonth }, (_, i) => ({
+        label: String(i + 1),
+        dayStr: `${barYear}-${String(barMonth + 1).padStart(2, "0")}-${String(i + 1).padStart(2, "0")}`,
+      }))
+      return barWeek === 0 ? allDays : allDays.slice((barWeek - 1) * 7, (barWeek - 1) * 7 + 7)
+    }
+    const getScopedPayments = (payments: Payment[]) => {
+      switch (revenueRange) {
+        case "today":
+          return payments.filter(p => toPHDateString(p.paymentDate!) === todayStr)
+        case "week": {
+          const { startStr, endStr } = getWeekScope()
+          return payments.filter(p => {
+            const s = toPHDateString(p.paymentDate!)
+            return s >= startStr && s <= endStr
+          })
+        }
+        case "month": {
+          const allowedDays = new Set(getMonthScopeDays().map(d => d.dayStr))
+          return payments.filter(p => allowedDays.has(toPHDateString(p.paymentDate!)))
+        }
+        case "year":
+          return payments.filter(p => phYear(p.paymentDate!) === barYear)
+      }
+    }
+    const getDetailScopedPayments = (payments: Payment[]) => {
+      let scoped = payments.filter(p => phYear(p.paymentDate!) === detailYear)
+      if (detailMonth !== -1) {
+        scoped = scoped.filter(p => phMonth(p.paymentDate!) === detailMonth)
+      }
+      if (detailMonth !== -1 && detailWeek > 0) {
+        const startDay = (detailWeek - 1) * 7 + 1
+        const endDay = startDay + 6
+        scoped = scoped.filter(p => {
+          const day = toPHDate(p.paymentDate!).getUTCDate()
+          return day >= startDay && day <= endDay
+        })
+      }
+      return scoped
+    }
+    const getDetailTrendDays = () => {
+      if (detailMonth === -1) return []
+      const daysInMonth = new Date(detailYear, detailMonth + 1, 0).getDate()
+      const allDays = Array.from({ length: daysInMonth }, (_, i) => ({
+        label: String(i + 1),
+        dayStr: `${detailYear}-${String(detailMonth + 1).padStart(2, "0")}-${String(i + 1).padStart(2, "0")}`,
+      }))
+      return detailWeek === 0 ? allDays : allDays.slice((detailWeek - 1) * 7, (detailWeek - 1) * 7 + 7)
+    }
 
     // KPIs (unfiltered by method/for to keep totals accurate)
     setRevToday(sum(allPayments.filter(p => p.paymentDate && toPHDateString(p.paymentDate) === todayStr)))
@@ -388,6 +560,8 @@ export function AnalyticsDashboard() {
 
     // Filtered payments for charts
     const filtered = allPayments.filter(p => p.paymentDate && filterMethod(p) && filterPlan(p))
+    const scopedFiltered = getScopedPayments(filtered)
+    const detailScopedFiltered = getDetailScopedPayments(filtered)
 
     // Bar chart data — uses barYear/barMonth/barWeek for fine-grained navigation
     let barData: RevenueBarPoint[] = []
@@ -395,49 +569,32 @@ export function AnalyticsDashboard() {
       case "today": {
         barData = Array.from({ length: 24 }, (_, h) => ({
           label:   formatHourLabel(h),
-          revenue: sum(filtered.filter(p => phHour(p.paymentDate!) === h && toPHDateString(p.paymentDate!) === todayStr)),
-          count:   filtered.filter(p => phHour(p.paymentDate!) === h && toPHDateString(p.paymentDate!) === todayStr).length,
+          revenue: sum(scopedFiltered.filter(p => phHour(p.paymentDate!) === h)),
+          count:   scopedFiltered.filter(p => phHour(p.paymentDate!) === h).length,
         })).filter(d => d.revenue > 0 || d.count > 0)
         break
       }
       case "week": {
-        // Use barYear + week-of-year based on barWeek picker offset from start of barYear
-        const weekStart = new Date(barYear, 0, 1 + barWeek * 7)
-        const wsStr = `${weekStart.getFullYear()}-${String(weekStart.getMonth()+1).padStart(2,"0")}-${String(weekStart.getDate()).padStart(2,"0")}`
-        const weekEnd = new Date(weekStart.getTime() + 6 * 24 * 60 * 60 * 1000)
-        const weStr = `${weekEnd.getFullYear()}-${String(weekEnd.getMonth()+1).padStart(2,"0")}-${String(weekEnd.getDate()).padStart(2,"0")}`
         barData = DAY_SHORT.map((label, i) => ({
           label,
-          revenue: sum(filtered.filter(p => { const s = toPHDateString(p.paymentDate!); return s >= wsStr && s <= weStr && phDayOfWeek(p.paymentDate!) === i })),
-          count:   filtered.filter(p => { const s = toPHDateString(p.paymentDate!); return s >= wsStr && s <= weStr && phDayOfWeek(p.paymentDate!) === i }).length,
+          revenue: sum(scopedFiltered.filter(p => phDayOfWeek(p.paymentDate!) === i)),
+          count:   scopedFiltered.filter(p => phDayOfWeek(p.paymentDate!) === i).length,
         }))
         break
       }
       case "month": {
-        // Use barYear + barMonth; if barWeek > 0, filter to that week within the month
-        const daysInBarMonth = new Date(barYear, barMonth + 1, 0).getDate()
-        const allDays = Array.from({ length: daysInBarMonth }, (_, i) => {
-          const dayStr = `${barYear}-${String(barMonth + 1).padStart(2, "0")}-${String(i + 1).padStart(2, "0")}`
-          return { label: String(i + 1), dayStr }
-        })
-        const filteredDays = barWeek === 0 ? allDays : (() => {
-          // Week 1 = days 1-7, Week 2 = 8-14, etc.
-          const start = (barWeek - 1) * 7
-          return allDays.slice(start, start + 7)
-        })()
-        barData = filteredDays.map(({ label, dayStr }) => ({
+        barData = getMonthScopeDays().map(({ label, dayStr }) => ({
           label,
-          revenue: sum(filtered.filter(p => toPHDateString(p.paymentDate!) === dayStr)),
-          count:   filtered.filter(p => toPHDateString(p.paymentDate!) === dayStr).length,
+          revenue: sum(scopedFiltered.filter(p => toPHDateString(p.paymentDate!) === dayStr)),
+          count:   scopedFiltered.filter(p => toPHDateString(p.paymentDate!) === dayStr).length,
         }))
         break
       }
       case "year": {
-        // Use barYear
         barData = MONTH_SHORT.map((label, mi) => ({
           label,
-          revenue: sum(filtered.filter(p => phYear(p.paymentDate!) === barYear && phMonth(p.paymentDate!) === mi)),
-          count:   filtered.filter(p => phYear(p.paymentDate!) === barYear && phMonth(p.paymentDate!) === mi).length,
+          revenue: sum(scopedFiltered.filter(p => phMonth(p.paymentDate!) === mi)),
+          count:   scopedFiltered.filter(p => phMonth(p.paymentDate!) === mi).length,
         }))
         break
       }
@@ -446,7 +603,7 @@ export function AnalyticsDashboard() {
 
     // Method breakdown pie
     const methodTotals = new Map<string, number>()
-    filtered.forEach(p => {
+    detailScopedFiltered.forEach(p => {
       const k = p.paymentMethod || "unknown"
       methodTotals.set(k, (methodTotals.get(k) || 0) + (p.amount || 0))
     })
@@ -460,7 +617,7 @@ export function AnalyticsDashboard() {
 
     // Plan breakdown pie
     const planTotals = new Map<PlanKey, number>()
-    filtered.forEach(p => {
+    detailScopedFiltered.forEach(p => {
       const k = getPlanKey(subMap.get(p.userId))
       planTotals.set(k, (planTotals.get(k) || 0) + (p.amount || 0))
     })
@@ -475,62 +632,25 @@ export function AnalyticsDashboard() {
     let trendData: RevenueTrendPoint[] = []
     const planSum = (pk: PlanKey, bucket: Payment[]) =>
       bucket.filter(p => getPlanKey(subMap.get(p.userId)) === pk).reduce((s,p) => s+(p.amount||0), 0)
-    switch (revenueRange) {
-      case "today": {
-        const labels = Array.from({ length: 24 }, (_, h) => formatHourLabel(h))
-        trendData = labels.map((label, h) => {
-          const bucket = filtered.filter(p => phHour(p.paymentDate!) === h && toPHDateString(p.paymentDate!) === todayStr)
-          const obj: RevenueTrendPoint = { label }
-          PLAN_KEYS.forEach(pk => { obj[PLAN_LABELS[pk]] = planSum(pk, bucket) })
-          return obj
-        }).filter(d => PLAN_KEYS.some(pk => (d[PLAN_LABELS[pk]] as number) > 0))
-        break
-      }
-      case "week": {
-        trendData = DAY_SHORT.map((label, i) => {
-          const bucket = filtered.filter(p => toPHDateString(p.paymentDate!) >= thisWeekStartStr && phDayOfWeek(p.paymentDate!) === i)
-          const obj: RevenueTrendPoint = { label }
-          PLAN_KEYS.forEach(pk => { obj[PLAN_LABELS[pk]] = planSum(pk, bucket) })
-          return obj
-        })
-        break
-      }
-      case "month": {
-        const daysInBarMonth2 = new Date(barYear, barMonth + 1, 0).getDate()
-        const allDays2 = Array.from({ length: daysInBarMonth2 }, (_, i) => ({
-          label: String(i+1),
-          dayStr: `${barYear}-${String(barMonth+1).padStart(2,"0")}-${String(i+1).padStart(2,"0")}`
-        }))
-        const days2 = barWeek === 0 ? allDays2 : allDays2.slice((barWeek-1)*7, (barWeek-1)*7+7)
-        trendData = days2.map(({ label, dayStr }) => {
-          const bucket = filtered.filter(p => toPHDateString(p.paymentDate!) === dayStr)
-          const obj: RevenueTrendPoint = { label }
-          PLAN_KEYS.forEach(pk => { obj[PLAN_LABELS[pk]] = planSum(pk, bucket) })
-          return obj
-        })
-        break
-      }
-      case "year": {
-        trendData = MONTH_SHORT.map((label, mi) => {
-          const bucket = filtered.filter(p => phYear(p.paymentDate!) === barYear && phMonth(p.paymentDate!) === mi)
-          const obj: RevenueTrendPoint = { label }
-          PLAN_KEYS.forEach(pk => { obj[PLAN_LABELS[pk]] = planSum(pk, bucket) })
-          return obj
-        })
-        break
-      }
+    if (detailMonth === -1) {
+      trendData = MONTH_SHORT.map((label, mi) => {
+        const bucket = detailScopedFiltered.filter(p => phMonth(p.paymentDate!) === mi)
+        const obj: RevenueTrendPoint = { label }
+        PLAN_KEYS.forEach(pk => { obj[PLAN_LABELS[pk]] = planSum(pk, bucket) })
+        return obj
+      })
+    } else {
+      trendData = getDetailTrendDays().map(({ label, dayStr }) => {
+        const bucket = detailScopedFiltered.filter(p => toPHDateString(p.paymentDate!) === dayStr)
+        const obj: RevenueTrendPoint = { label }
+        PLAN_KEYS.forEach(pk => { obj[PLAN_LABELS[pk]] = planSum(pk, bucket) })
+        return obj
+      })
     }
     setRevenueTrendData(trendData)
 
     // Recent transactions (latest 20, respecting range + filters)
-    let rangeFiltered = filtered
-    switch (revenueRange) {
-      case "today": rangeFiltered = filtered.filter(p => toPHDateString(p.paymentDate!) === todayStr); break
-      case "week":  rangeFiltered = filtered.filter(p => toPHDateString(p.paymentDate!) >= thisWeekStartStr); break
-      case "month": rangeFiltered = filtered.filter(p => phYear(p.paymentDate!) === ph.year && phMonth(p.paymentDate!) === ph.month); break
-      case "year":  rangeFiltered = filtered.filter(p => phYear(p.paymentDate!) === ph.year); break
-    }
-    const sorted = [...rangeFiltered].sort((a, b) => new Date(b.paymentDate!).getTime() - new Date(a.paymentDate!).getTime())
+    const sorted = [...detailScopedFiltered].sort((a, b) => new Date(b.paymentDate!).getTime() - new Date(a.paymentDate!).getTime())
     setRecentTransactions(
       sorted.slice(0, 20).map(p => ({
         paymentId:     p.paymentId,
@@ -1190,6 +1310,16 @@ export function AnalyticsDashboard() {
         </CardContent>
       </Card>
 
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-1">
+        <div>
+          <p className="text-sm font-medium">Revenue Detail Filters</p>
+          <p className="text-xs text-muted-foreground">
+            Applied to payment method, plan, trend, and recent transactions for {getRevenueDetailScopeLabel()}
+          </p>
+        </div>
+        {renderRevenueDetailControls()}
+      </div>
+
       {/* Pie charts row */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* By Payment Method */}
@@ -1198,7 +1328,7 @@ export function AnalyticsDashboard() {
             <CardTitle className="text-base md:text-lg flex items-center gap-2">
               <CreditCard className="w-4 h-4 text-blue-400" />By Payment Method
             </CardTitle>
-            <CardDescription className="text-xs">Revenue breakdown by how members paid</CardDescription>
+            <CardDescription className="text-xs">Revenue breakdown by how members paid in {getRevenueDetailScopeLabel()}</CardDescription>
           </CardHeader>
           <CardContent className="p-2 md:p-6 md:pt-0">
             {revenueMethodPie.length === 0 ? (
@@ -1239,7 +1369,7 @@ export function AnalyticsDashboard() {
             <CardTitle className="text-base md:text-lg flex items-center gap-2">
               <Wallet className="w-4 h-4 text-amber-400" />By Plan
             </CardTitle>
-            <CardDescription className="text-xs">Revenue split by 1-month, 6-month, 1-year, walk-in, daily</CardDescription>
+            <CardDescription className="text-xs">Revenue split by plan in {getRevenueDetailScopeLabel()}</CardDescription>
           </CardHeader>
           <CardContent className="p-2 md:p-6 md:pt-0">
             {revenuePlanPie.length === 0 ? (
@@ -1282,7 +1412,7 @@ export function AnalyticsDashboard() {
             <TrendingUp className="w-4 h-4 text-indigo-400" />Revenue Trend by Plan
           </CardTitle>
           <CardDescription className="text-xs md:text-sm">
-            Revenue per plan over {revenueRange} — each line is a membership plan
+            Revenue per plan for {getRevenueDetailScopeLabel()} — each line is a membership plan
           </CardDescription>
         </CardHeader>
         <CardContent className="h-[280px] md:h-[340px] p-2 md:p-6 md:pt-0">
@@ -1317,7 +1447,7 @@ export function AnalyticsDashboard() {
             <Banknote className="w-4 h-4 text-emerald-500" />Recent Transactions
           </CardTitle>
           <CardDescription className="text-xs md:text-sm">
-            Latest {recentTransactions.length} payments this {revenueRange}
+            Latest {recentTransactions.length} payments in {getRevenueDetailScopeLabel()}
           </CardDescription>
         </CardHeader>
         <CardContent className="p-3 md:p-6 pt-0 md:pt-0">
