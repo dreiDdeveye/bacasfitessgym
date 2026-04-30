@@ -67,6 +67,8 @@ export function MemberList({ users, onUpdate }: MemberListProps) {
   const [showRenew, setShowRenew] = useState(false)
   const [subscriptionCache, setSubscriptionCache] =
     useState<Map<string, Subscription | null>>(new Map())
+  const [renewalStats, setRenewalStats] =
+    useState<Map<string, { totalRecords: number; totalRenewals: number }>>(new Map())
 
   const normalizeValue = (value?: string | null) =>
     (value || "").toLowerCase().replace(/[\s_-]+/g, "")
@@ -126,16 +128,55 @@ export function MemberList({ users, onUpdate }: MemberListProps) {
     return planDuration === normalizeValue(filter)
   }
 
+  const getSubscriptionTime = (subscription: Subscription) =>
+    new Date(subscription.createdAt || subscription.startDate || subscription.endDate).getTime()
+
+  const getLatestSubscription = (subscriptions: Subscription[]) =>
+    subscriptions.reduce<Subscription | null>((latest, subscription) => {
+      if (!latest) return subscription
+      return getSubscriptionTime(subscription) > getSubscriptionTime(latest)
+        ? subscription
+        : latest
+    }, null)
+
   /* ---------------- OPTIMIZED SUBSCRIPTIONS CACHE ---------------- */
   useEffect(() => {
     const loadSubscriptions = async () => {
-      // Fetch ALL subscriptions at once instead of one by one
-      const allSubscriptions = await storageService.getSubscriptions()
+      const [allSubscriptions, subscriptionHistory] = await Promise.all([
+        storageService.getSubscriptions(),
+        storageService.getSubscriptionHistory(),
+      ])
       
-      // Create a Map for O(1) lookups
-      const cache = new Map<string, Subscription | null>(
-        allSubscriptions.map(sub => [sub.userId, sub])
-      )
+      const subscriptionsByUser = new Map<string, Subscription[]>()
+      for (const subscription of allSubscriptions) {
+        const existing = subscriptionsByUser.get(subscription.userId) || []
+        existing.push(subscription)
+        subscriptionsByUser.set(subscription.userId, existing)
+      }
+
+      const cache = new Map<string, Subscription | null>()
+      for (const [userId, subscriptions] of subscriptionsByUser) {
+        cache.set(userId, getLatestSubscription(subscriptions))
+      }
+
+      const recordCounts = new Map<string, number>()
+      for (const subscription of allSubscriptions) {
+        recordCounts.set(subscription.userId, (recordCounts.get(subscription.userId) || 0) + 1)
+      }
+
+      for (const historyItem of subscriptionHistory) {
+        recordCounts.set(historyItem.userId, (recordCounts.get(historyItem.userId) || 0) + 1)
+      }
+
+      const nextRenewalStats = new Map<string, { totalRecords: number; totalRenewals: number }>()
+      for (const [userId, totalRecords] of recordCounts) {
+        if (totalRecords > 1) {
+          nextRenewalStats.set(userId, {
+            totalRecords,
+            totalRenewals: totalRecords - 1,
+          })
+        }
+      }
       
       // Add null entries for users without subscriptions
       for (const user of users) {
@@ -145,6 +186,7 @@ export function MemberList({ users, onUpdate }: MemberListProps) {
       }
       
       setSubscriptionCache(cache)
+      setRenewalStats(nextRenewalStats)
     }
     loadSubscriptions()
   }, [users])
@@ -175,19 +217,29 @@ export function MemberList({ users, onUpdate }: MemberListProps) {
         
         // Membership type filter
         if (membershipTypeFilter !== "all") {
+          if (membershipTypeFilter === "renewed") {
+            return (renewalStats.get(u.userId)?.totalRecords || 0) > 1
+          }
+
           if (!sub?.membershipType || sub.membershipType !== membershipTypeFilter) return false
         }
         
         return true
       })
     )
-  }, [searchTerm, statusFilter, planFilter, membershipTypeFilter, users, subscriptionCache])
+  }, [searchTerm, statusFilter, planFilter, membershipTypeFilter, users, subscriptionCache, renewalStats])
 
   const getSubscription = (userId: string): Subscription | null =>
     subscriptionCache.get(userId) ?? null
 
   const isActive = (sub: Subscription | null | undefined) =>
     subscriptionService.isSubscriptionActive(sub ?? null)
+
+  const getEffectiveSubscriptionStatus = (sub: Subscription | null | undefined) => {
+    if (!sub) return "No Subscription"
+    if (sub.status === "cancelled") return "Cancelled"
+    return isActive(sub) ? "Active" : "Expired"
+  }
 
   const getRemainingDays = (sub: Subscription | null) =>
     subscriptionService.getRemainingDays(sub)
@@ -367,6 +419,7 @@ export function MemberList({ users, onUpdate }: MemberListProps) {
             <SelectItem value="all">All Types</SelectItem>
             <SelectItem value="new">New</SelectItem>
             <SelectItem value="renewal">Renewal</SelectItem>
+            <SelectItem value="renewed">Renewed Members</SelectItem>
             <SelectItem value="walk-in">Walk-in</SelectItem>
           </SelectContent>
         </Select>
@@ -398,6 +451,7 @@ export function MemberList({ users, onUpdate }: MemberListProps) {
         {filteredUsers.map((user) => {
           const sub = getSubscription(user.userId)
           const active = isActive(sub)
+          const renewed = renewalStats.get(user.userId)
 
           return (
             <Card key={user.userId} className="p-4 rounded-xl border">
@@ -430,6 +484,16 @@ export function MemberList({ users, onUpdate }: MemberListProps) {
     {formatMembershipType(sub.membershipType)}
   </Badge>
 )}
+                    {membershipTypeFilter === "renewed" && renewed && (
+                      <>
+                        <Badge variant="secondary" className="text-xs">
+                          {renewed.totalRenewals} renewal{renewed.totalRenewals === 1 ? "" : "s"}
+                        </Badge>
+                        <Badge variant="outline" className="text-xs">
+                          Latest: {getEffectiveSubscriptionStatus(sub)}
+                        </Badge>
+                      </>
+                    )}
                     {isExpiringSoon(sub) && (
                       <Badge variant="outline" className="text-amber-500 text-xs">
                         <AlertTriangle className="w-3 h-3 mr-1" />

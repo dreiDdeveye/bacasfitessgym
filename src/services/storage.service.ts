@@ -733,13 +733,15 @@ export async function getSubscriptionHistory(
 export async function archiveSubscription(
   subscription: Subscription,
 ): Promise<void> {
+  const archivedStatus = subscription.status === "cancelled" ? "cancelled" : "expired"
+
   const { error } = await supabase.from("subscription_history").insert([
     {
       id: `${subscription.userId}-${Date.now()}`,
       user_id: subscription.userId,
       start_date: subscription.startDate,
       end_date: subscription.endDate,
-      status: subscription.status,
+      status: archivedStatus,
       created_at: subscription.createdAt,
       updated_at: new Date().toISOString(),
     },

@@ -37,12 +37,13 @@ import {
   getDaysInMonth,
   endOfWeek,
 } from "date-fns"
-import type { ScanLog, Payment, User as UserType, Subscription } from "@/src/types"
+import type { ScanLog, Payment, User as UserType, Subscription, SubscriptionHistory } from "@/src/types"
 import { storageService } from "@/src/services/storage.service"
 import {
   TrendingUp, TrendingDown, Minus, Clock, Users, Calendar,
   Activity, Moon, LogIn, LogOut, Timer, UserCheck,
   PhilippinePeso, CreditCard, Banknote, Wallet, BarChart2,
+  Repeat2, Trophy,
 } from "lucide-react"
 
 // ─── Philippine Time helpers (UTC+8) ─────────────────────────────────────────
@@ -100,6 +101,19 @@ interface RevenueTransaction {
   paymentDate: string
 }
 
+interface TopSubscriptionMember {
+  userId: string
+  name: string
+  subscriptionCount: number
+  renewalCount: number
+  totalHoursMs: number
+}
+
+interface TopSubscriptionTypeGroup {
+  type: PlanKey
+  members: TopSubscriptionMember[]
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 const TIME_PAIRS: TimePair[] = Array.from({ length: 12 }, (_, i) => {
   const start = 1 + i * 2
@@ -142,7 +156,11 @@ const PLAN_COLORS: Record<PlanKey, string> = {
   walkin: "#3b82f6", daily: "#ec4899", other: "#71717a",
 }
 
-function getPlanKey(sub: Subscription | undefined | null): PlanKey {
+const TOP_MEMBER_PLAN_KEYS: PlanKey[] = ["1month", "6months", "1year", "daily", "walkin"]
+
+function getPlanKey(
+  sub: (Pick<Subscription, "startDate" | "endDate"> & Partial<Pick<Subscription, "planDuration" | "membershipType">>) | undefined | null
+): PlanKey {
   if (!sub) return "other"
   const normalize = (value?: string | null) => (value || "").toLowerCase().replace(/[\s_-]+/g, "")
   const dur  = normalize(sub.planDuration)
@@ -180,6 +198,82 @@ function formatPeso(n: number) {
 }
 
 // ─── Shared sub-components ────────────────────────────────────────────────────
+function formatDuration(ms: number) {
+  const hours = ms / (1000 * 60 * 60)
+  if (hours < 1) return `${Math.round(ms / (1000 * 60))}m`
+  return `${hours.toFixed(1)}h`
+}
+
+function calculateTotalHoursByUser(logs: ScanLog[]) {
+  const groupedLogs = new Map<string, ScanLog[]>()
+  for (const log of logs) {
+    if (log.status !== "success" || (log.action !== "check-in" && log.action !== "check-out")) continue
+    const userLogs = groupedLogs.get(log.userId) || []
+    userLogs.push(log)
+    groupedLogs.set(log.userId, userLogs)
+  }
+
+  const totals = new Map<string, number>()
+  for (const [userId, userLogs] of groupedLogs) {
+    const sorted = userLogs.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+    let lastIn: Date | null = null
+    let totalMs = 0
+
+    for (const log of sorted) {
+      if (log.action === "check-in") lastIn = new Date(log.timestamp)
+      if (log.action === "check-out" && lastIn) {
+        const durationMs = new Date(log.timestamp).getTime() - lastIn.getTime()
+        if (durationMs > 0) totalMs += durationMs
+        lastIn = null
+      }
+    }
+
+    totals.set(userId, totalMs)
+  }
+
+  return totals
+}
+
+function buildTopSubscriptionGroups(
+  users: UserType[],
+  subscriptions: Subscription[],
+  history: SubscriptionHistory[],
+  logs: ScanLog[],
+  limit: number,
+): TopSubscriptionTypeGroup[] {
+  const userMap = new Map(users.map(user => [user.userId, user]))
+  const recordCountsByType = new Map<PlanKey, Map<string, number>>()
+  const totalHoursByUser = calculateTotalHoursByUser(logs)
+
+  const addRecord = (userId: string, type: PlanKey) => {
+    const counts = recordCountsByType.get(type) || new Map<string, number>()
+    counts.set(userId, (counts.get(userId) || 0) + 1)
+    recordCountsByType.set(type, counts)
+  }
+
+  for (const subscription of subscriptions) {
+    addRecord(subscription.userId, getPlanKey(subscription))
+  }
+
+  for (const historyItem of history) {
+    addRecord(historyItem.userId, getPlanKey(historyItem))
+  }
+
+  return TOP_MEMBER_PLAN_KEYS.map(type => ({
+    type,
+    members: Array.from((recordCountsByType.get(type) || new Map<string, number>()).entries())
+      .map(([userId, subscriptionCount]) => ({
+        userId,
+        name: userMap.get(userId)?.name || userId,
+        subscriptionCount,
+        renewalCount: Math.max(subscriptionCount - 1, 0),
+        totalHoursMs: totalHoursByUser.get(userId) || 0,
+      }))
+      .sort((a, b) => b.renewalCount - a.renewalCount || b.subscriptionCount - a.subscriptionCount || b.totalHoursMs - a.totalHoursMs)
+      .slice(0, limit),
+  }))
+}
+
 function Sparkline({ data, color = "#10b981" }: { data: number[]; color?: string }) {
   if (data.length < 2) return null
   const max = Math.max(...data, 1), min = Math.min(...data, 0), range = max - min || 1
@@ -257,6 +351,8 @@ export function AnalyticsDashboard() {
   const [filteredWeeklyBreakdown, setFilteredWeeklyBreakdown] = useState<{ label: string; value: number }[]>([])
   const [filteredHourlyDistribution, setFilteredHourlyDistribution] = useState<number[]>([])
   const [filteredAvgDaily, setFilteredAvgDaily]     = useState(0)
+  const [topSubscriptionGroups, setTopSubscriptionGroups] = useState<TopSubscriptionTypeGroup[]>([])
+  const [selectedTopSubscriptionType, setSelectedTopSubscriptionType] = useState<PlanKey>("daily")
 
   // ── Revenue state ─────────────────────────────────────────────────────────
   const [allPayments, setAllPayments]               = useState<Payment[]>([])
@@ -666,11 +762,12 @@ export function AnalyticsDashboard() {
 
   // ── Main loader ───────────────────────────────────────────────────────────
   async function loadAnalytics() {
-    const [logs, payments, users, subs] = await Promise.all([
+    const [logs, payments, users, subs, subscriptionHistory] = await Promise.all([
       storageService.getScanLogs(),
       storageService.getPayments(),
       storageService.getUsers(),
       storageService.getSubscriptions(),
+      storageService.getSubscriptionHistory(),
     ])
     const newUserMap = new Map(users.map((u: UserType) => [u.userId, u.name]))
     const newSubMap  = new Map(subs.map((s: Subscription) => [s.userId, s]))
@@ -681,6 +778,7 @@ export function AnalyticsDashboard() {
     setAllValidLogs(validLogs)
     setTotalCheckIns(validLogs.length)
     setAllPayments(payments)
+    setTopSubscriptionGroups(buildTopSubscriptionGroups(users, subs, subscriptionHistory, logs, 10))
 
     const ph      = nowPH()
     const realNow = new Date()
@@ -923,10 +1021,75 @@ export function AnalyticsDashboard() {
   const totalRevenueInRange = revenueBarData.reduce((s, d) => s + d.revenue, 0)
   const totalTransactionsInRange = revenueBarData.reduce((s, d) => s + d.count, 0)
   const avgTransaction = totalTransactionsInRange > 0 ? totalRevenueInRange / totalTransactionsInRange : 0
+  const selectedTopSubscriptionGroup =
+    topSubscriptionGroups.find(group => group.type === selectedTopSubscriptionType) || {
+      type: selectedTopSubscriptionType,
+      members: [],
+    }
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="space-y-6">
+      <Card className="border-zinc-800">
+        <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-3 md:p-6">
+          <div>
+            <CardTitle className="text-base md:text-lg flex items-center gap-2">
+              <Trophy className="w-4 h-4 md:w-5 md:h-5 text-amber-500" />
+              Top Renewed Members by Type
+            </CardTitle>
+            <CardDescription className="text-xs md:text-sm">
+              Top 10 members by renewal count for the selected subscription type
+            </CardDescription>
+          </div>
+          <div className="flex items-center gap-2">
+            <Repeat2 className="w-5 h-5 text-muted-foreground hidden sm:block" />
+            <select
+              value={selectedTopSubscriptionType}
+              onChange={event => setSelectedTopSubscriptionType(event.target.value as PlanKey)}
+              className="border border-zinc-700 rounded px-2 py-1.5 bg-zinc-800 text-xs md:text-sm min-w-[150px]"
+            >
+              {TOP_MEMBER_PLAN_KEYS.map(plan => (
+                <option key={plan} value={plan}>{PLAN_LABELS[plan]}</option>
+              ))}
+            </select>
+          </div>
+        </CardHeader>
+        <CardContent className="p-3 md:p-6 pt-0 md:pt-0">
+          {selectedTopSubscriptionGroup.members.length === 0 ? (
+            <div className="flex items-center justify-center py-10 text-muted-foreground">
+              <p className="text-sm">No {PLAN_LABELS[selectedTopSubscriptionType]} records yet</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {selectedTopSubscriptionGroup.members.map((member, index) => (
+                <div key={member.userId}
+                  className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900/30 hover:bg-zinc-800/40 transition-colors p-2.5 md:p-3">
+                  <div className="w-7 h-7 rounded-full bg-amber-500/10 text-amber-400 flex items-center justify-center text-sm font-bold shrink-0">
+                    {index + 1}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-semibold text-sm truncate">{member.name}</span>
+                      <span className="text-[10px] text-muted-foreground font-mono">{member.userId}</span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      {member.subscriptionCount} total {PLAN_LABELS[selectedTopSubscriptionType]} record{member.subscriptionCount === 1 ? "" : "s"}
+                    </p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="font-bold text-base text-amber-400">{member.renewalCount}</p>
+                    <p className="text-[10px] text-muted-foreground">renewals</p>
+                  </div>
+                  <div className="text-right shrink-0 min-w-[62px]">
+                    <p className="font-bold text-sm text-emerald-400">{formatDuration(member.totalHoursMs)}</p>
+                    <p className="text-[10px] text-muted-foreground">hours</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
       {/* ── Attendance Time Range Selector ────────────────────────────────── */}
       <div className="flex items-center gap-2 md:gap-3 flex-wrap">
         <span className="text-xs md:text-sm text-muted-foreground">View:</span>

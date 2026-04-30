@@ -259,11 +259,6 @@ export function EditMemberDialog({ user, open, onOpenChange, onMemberUpdated }: 
         programType: formData.programType.trim() || undefined,
       })
 
-      if (subscription) {
-        // Archive current subscription
-        await storageService.archiveSubscription(subscription)
-      }
-
       // Create new subscription with updated dates
       const newSubscription: Subscription = {
         userId: user.userId,

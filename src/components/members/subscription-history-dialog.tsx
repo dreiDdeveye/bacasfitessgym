@@ -19,6 +19,49 @@ export function SubscriptionHistoryDialog({ userId, userName, open, onOpenChange
   const [currentSubscription, setCurrentSubscription] = useState<Subscription | null>(null)
   const [isLoading, setIsLoading] = useState(false)
 
+  const allSubscriptionRecords = [
+    ...(currentSubscription
+      ? [{
+          id: `${currentSubscription.userId}-current`,
+          subscription: currentSubscription,
+          label: "Current Subscription",
+          archivedAt: null,
+          isCurrent: true,
+        }]
+      : []),
+    ...history.map((subscription) => ({
+      id: subscription.id,
+      subscription,
+      label: "Previous Subscription",
+      archivedAt: subscription.updatedAt,
+      isCurrent: false,
+    })),
+  ].sort((a, b) => {
+    const aTime = new Date(a.subscription.startDate || a.subscription.createdAt).getTime()
+    const bTime = new Date(b.subscription.startDate || b.subscription.createdAt).getTime()
+    return bTime - aTime
+  })
+
+  const getEffectiveStatus = (subscription: Subscription | SubscriptionHistory) => {
+    if (subscription.status === "cancelled") return "cancelled"
+
+    const now = new Date()
+    const startDate = new Date(subscription.startDate)
+    const endDate = new Date(subscription.endDate)
+
+    return subscription.status === "active" && startDate <= now && endDate >= now
+      ? "active"
+      : "expired"
+  }
+
+  const getPastSubscriptionStatus = (subscription: SubscriptionHistory) => {
+    if (subscription.status === "cancelled") return "cancelled"
+    return "expired"
+  }
+
+  const getStatusBadgeVariant = (status: "active" | "expired" | "cancelled") =>
+    status === "active" ? "default" : "destructive"
+
   useEffect(() => {
     if (userId && open) {
       setIsLoading(true)
@@ -50,38 +93,43 @@ export function SubscriptionHistoryDialog({ userId, userName, open, onOpenChange
         {isLoading ? (
           <p className="text-center py-8 text-muted-foreground">Loading...</p>
         ) : (
-          <div className="space-y-4 max-h-[60vh] overflow-y-auto px-2 sm:px-0">
-            {currentSubscription && (
-              <div className="border rounded-lg p-4 bg-primary/5">
-                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-2 gap-2">
-                  <h3 className="font-semibold">Current Subscription</h3>
-                  <Badge variant={currentSubscription.status === "active" ? "default" : "destructive"}>
-                    {currentSubscription.status}
-                  </Badge>
-                </div>
-                <div className="text-sm space-y-1 text-muted-foreground">
-                  <p>Start: {format(new Date(currentSubscription.startDate), "MMM dd, yyyy")}</p>
-                  <p>End: {format(new Date(currentSubscription.endDate), "MMM dd, yyyy")}</p>
-                </div>
-              </div>
-            )}
+          <div className="space-y-3 max-h-[60vh] overflow-y-auto px-2 sm:px-0">
+            {allSubscriptionRecords.length > 0 ? (
+              <>
+                <h3 className="font-semibold text-sm text-muted-foreground">All Subscriptions & Renewals</h3>
+                {allSubscriptionRecords.map(({ id, subscription, label, archivedAt, isCurrent }, index) => {
+                  const status = isCurrent
+                    ? getEffectiveStatus(subscription)
+                    : getPastSubscriptionStatus(subscription as SubscriptionHistory)
 
-            {history.length > 0 ? (
-              <div className="space-y-3">
-                <h3 className="font-semibold text-sm text-muted-foreground">Past Subscriptions</h3>
-                {history.map((sub) => (
-                  <div key={sub.id} className="border rounded-lg p-4">
-                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-2 gap-2">
-                      <Badge variant="outline" className="whitespace-nowrap">{sub.status}</Badge>
+                  return (
+                    <div key={id} className={`border rounded-lg p-4 ${isCurrent ? "bg-primary/5" : ""}`}>
+                      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-2 gap-2">
+                        <div>
+                          <h4 className="font-semibold">{label}</h4>
+                          <p className="text-xs text-muted-foreground">Record #{allSubscriptionRecords.length - index}</p>
+                        </div>
+                        <Badge variant={getStatusBadgeVariant(status)} className="whitespace-nowrap">
+                          {status}
+                        </Badge>
+                      </div>
+                      <div className="text-sm space-y-1 text-muted-foreground">
+                        <p>Start: {format(new Date(subscription.startDate), "MMM dd, yyyy")}</p>
+                        <p>End: {format(new Date(subscription.endDate), "MMM dd, yyyy")}</p>
+                        {"planDuration" in subscription && subscription.planDuration && (
+                          <p>Plan: {subscription.planDuration}</p>
+                        )}
+                        {"membershipType" in subscription && subscription.membershipType && (
+                          <p>Type: {subscription.membershipType}</p>
+                        )}
+                        {archivedAt && (
+                          <p className="text-xs">Archived: {format(new Date(archivedAt), "MMM dd, yyyy HH:mm")}</p>
+                        )}
+                      </div>
                     </div>
-                    <div className="text-sm space-y-1 text-muted-foreground">
-                      <p>Start: {format(new Date(sub.startDate), "MMM dd, yyyy")}</p>
-                      <p>End: {format(new Date(sub.endDate), "MMM dd, yyyy")}</p>
-                      <p className="text-xs">Archived: {format(new Date(sub.updatedAt), "MMM dd, yyyy HH:mm")}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  )
+                })}
+              </>
             ) : (
               <p className="text-sm text-muted-foreground text-center py-8">No subscription history available</p>
             )}

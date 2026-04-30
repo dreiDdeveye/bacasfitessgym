@@ -29,6 +29,8 @@ import {
   Calendar,
   CalendarDays,
   CalendarClock,
+  Repeat2,
+  Trophy,
   Wifi,
   WifiOff,
   ShieldAlert,
@@ -43,7 +45,7 @@ import { accessService } from "@/src/services/access.service"
 import { storageService } from "@/src/services/storage.service"
 import { subscriptionService } from "@/src/services/subscription.service"
 import { offlineQueue } from "@/src/services/offline-queue.service"
-import type { ScanLog, Subscription, User as UserType, Payment } from "@/src/types"
+import type { ScanLog, Subscription, SubscriptionHistory, User as UserType, Payment } from "@/src/types"
 import { playLongBeep, speakCheckIn, speakCheckOut, speakExpired } from "@/src/lib/sound"
 import {
   startOfDay,
@@ -117,6 +119,7 @@ type DuplicateScan = {
 }
 
 type MembershipType = "monthly" | "daily" | "walkin" | "unknown"
+type SubscriptionTypeKey = "1month" | "6months" | "1year" | "daily" | "walkin" | "other"
 
 type MemberWithStats = {
   user: UserType
@@ -124,6 +127,19 @@ type MemberWithStats = {
   isActive: boolean
   membershipType: MembershipType
   gymHours: { today: number; week: number; month: number; year: number; all: number }
+}
+
+type TopSubscriptionMember = {
+  userId: string
+  name: string
+  subscriptionCount: number
+  renewalCount: number
+  totalHoursMs: number
+}
+
+type TopSubscriptionTypeGroup = {
+  type: SubscriptionTypeKey
+  members: TopSubscriptionMember[]
 }
 
 type HoursView        = "today" | "week" | "month" | "year" | "all"
@@ -147,6 +163,17 @@ const PAYMENT_FOR_LABELS: Record<PaymentFor, string> = {
   both:       "Both",
   other:      "Other",
 }
+
+const SUBSCRIPTION_TYPE_LABELS: Record<SubscriptionTypeKey, string> = {
+  "1month": "1M",
+  "6months": "6M",
+  "1year": "1Y",
+  daily: "Daily",
+  walkin: "Walk-in",
+  other: "Other",
+}
+
+const SUBSCRIPTION_TYPE_KEYS: SubscriptionTypeKey[] = ["1month", "6months", "1year", "daily", "walkin"]
 
 // Compute end date based on plan type
 const computeNewEndDate = (plan: RenewalPlan, customEndDate: string): Date => {
@@ -201,6 +228,8 @@ export function ScannerInterface() {
   const [hoursView, setHoursView] = useState<HoursView>("week")
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all")
   const [membershipFilter, setMembershipFilter] = useState<MembershipFilter>("all")
+  const [topSubscriptionGroups, setTopSubscriptionGroups] = useState<TopSubscriptionTypeGroup[]>([])
+  const [selectedTopSubscriptionType, setSelectedTopSubscriptionType] = useState<SubscriptionTypeKey>("daily")
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date())
   const [isOnline, setIsOnline] = useState(
     typeof navigator !== "undefined" ? navigator.onLine : true
@@ -402,6 +431,38 @@ export function ScannerInterface() {
     }
   }
 
+  const getSubscriptionTypeKey = (
+    subscription: Pick<Subscription, "startDate" | "endDate"> & Partial<Pick<Subscription, "planDuration" | "membershipType">>
+  ): SubscriptionTypeKey => {
+    const normalize = (value?: string | null) => (value || "").toLowerCase().replace(/[\s_-]+/g, "")
+    const planDuration = normalize(subscription.planDuration)
+    const membershipType = normalize(subscription.membershipType)
+
+    if (planDuration === "daily" || membershipType === "daily") return "daily"
+    if (planDuration === "walkin" || membershipType === "walkin") return "walkin"
+    if (planDuration === "1month" || planDuration === "1m") return "1month"
+    if (planDuration === "6months" || planDuration === "6m") return "6months"
+    if (["12months", "12month", "1year", "1y"].includes(planDuration)) return "1year"
+
+    const start = new Date(subscription.startDate)
+    const end = new Date(subscription.endDate)
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return "other"
+
+    const durationHours = (end.getTime() - start.getTime()) / (1000 * 60 * 60)
+    const monthDiff =
+      (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth())
+    const isEndOfDay =
+      end.getHours() === 23 && end.getMinutes() === 59 && end.getSeconds() === 59
+
+    if ((end.getHours() === 0 && end.getMinutes() === 0 && durationHours <= 24) || (isEndOfDay && durationHours <= 24)) return "daily"
+    if (monthDiff === 1) return "1month"
+    if (monthDiff === 6) return "6months"
+    if (monthDiff === 12) return "1year"
+    if (durationHours > 0) return "walkin"
+
+    return "other"
+  }
+
   const calculateGymHours = async (userId: string): Promise<MemberWithStats["gymHours"]> => {
     const logs = await storageService.getScanLogsByUserId(userId)
     if (!logs.length) return { today: 0, week: 0, month: 0, year: 0, all: 0 }
@@ -427,6 +488,75 @@ export function ScannerInterface() {
       year:  calc(startOfYear(now)),
       all:   calc(null),
     }
+  }
+
+  const calculateTotalHoursByUser = (logs: ScanLog[]) => {
+    const groupedLogs = new Map<string, ScanLog[]>()
+    for (const log of logs) {
+      if (log.status !== "success" || (log.action !== "check-in" && log.action !== "check-out")) continue
+      const userLogs = groupedLogs.get(log.userId) || []
+      userLogs.push(log)
+      groupedLogs.set(log.userId, userLogs)
+    }
+
+    const totals = new Map<string, number>()
+    for (const [userId, userLogs] of groupedLogs) {
+      const sorted = userLogs.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+      let lastIn: Date | null = null
+      let totalMs = 0
+
+      for (const log of sorted) {
+        if (log.action === "check-in") lastIn = new Date(log.timestamp)
+        if (log.action === "check-out" && lastIn) {
+          const durationMs = new Date(log.timestamp).getTime() - lastIn.getTime()
+          if (durationMs > 0) totalMs += durationMs
+          lastIn = null
+        }
+      }
+
+      totals.set(userId, totalMs)
+    }
+
+    return totals
+  }
+
+  const buildTopSubscriptionGroups = (
+    users: UserType[],
+    subscriptions: Subscription[],
+    history: SubscriptionHistory[],
+    logs: ScanLog[],
+  ) => {
+    const userMap = new Map(users.map(user => [user.userId, user]))
+    const recordCountsByType = new Map<SubscriptionTypeKey, Map<string, number>>()
+    const totalHoursByUser = calculateTotalHoursByUser(logs)
+
+    const addRecord = (userId: string, type: SubscriptionTypeKey) => {
+      const counts = recordCountsByType.get(type) || new Map<string, number>()
+      counts.set(userId, (counts.get(userId) || 0) + 1)
+      recordCountsByType.set(type, counts)
+    }
+
+    for (const subscription of subscriptions) {
+      addRecord(subscription.userId, getSubscriptionTypeKey(subscription))
+    }
+
+    for (const historyItem of history) {
+      addRecord(historyItem.userId, getSubscriptionTypeKey(historyItem))
+    }
+
+    return SUBSCRIPTION_TYPE_KEYS.map(type => ({
+      type,
+      members: Array.from((recordCountsByType.get(type) || new Map<string, number>()).entries())
+        .map(([userId, subscriptionCount]) => ({
+          userId,
+          name: userMap.get(userId)?.name || userId,
+          subscriptionCount,
+          renewalCount: Math.max(subscriptionCount - 1, 0),
+          totalHoursMs: totalHoursByUser.get(userId) || 0,
+        }))
+        .sort((a, b) => b.subscriptionCount - a.subscriptionCount || b.totalHoursMs - a.totalHoursMs)
+        .slice(0, 5),
+    }))
   }
 
   const loadMembersWithStats = async () => {
@@ -464,11 +594,13 @@ export function ScannerInterface() {
 
   const updateStats = async () => {
     try {
-      const [sessions, logs, users, allSubscriptions] = await Promise.all([
+      const [sessions, logs, users, allSubscriptions, subscriptionHistory, allLogs] = await Promise.all([
         storageService.getActiveSessions(),
         storageService.getTodayScanLogs(),
         storageService.getUsers(),
         storageService.getSubscriptions(),
+        storageService.getSubscriptionHistory(),
+        storageService.getScanLogs(),
       ])
       setActiveSessions(sessions.length)
       setTodayCheckIns(logs.filter(l => l.action === "check-in").length)
@@ -483,6 +615,7 @@ export function ScannerInterface() {
       setMonthlyCount(monthly)
       setDailyCount(daily)
       setWalkinCount(walkin)
+      setTopSubscriptionGroups(buildTopSubscriptionGroups(users, allSubscriptions, subscriptionHistory, allLogs))
       setLastUpdate(new Date())
       setIsOnline(true)
     } catch {
@@ -607,6 +740,11 @@ export function ScannerInterface() {
   const filteredMonthlyCount = membersWithStats.filter(m => m.membershipType === "monthly").length
   const filteredDailyCount   = membersWithStats.filter(m => m.membershipType === "daily").length
   const filteredWalkinCount  = membersWithStats.filter(m => m.membershipType === "walkin").length
+  const selectedTopSubscriptionGroup =
+    topSubscriptionGroups.find(group => group.type === selectedTopSubscriptionType) || {
+      type: selectedTopSubscriptionType,
+      members: [],
+    }
 
   const selectedPlanObj = renewal ? RENEWAL_PLANS.find(p => p.id === renewal.selectedPlan) : null
   const renewalNewEnd   = selectedPlanObj
@@ -706,6 +844,66 @@ export function ScannerInterface() {
           </div>
         </Card>
       </div>
+
+      {/* Top subscription members */}
+      <Card className="p-4 md:p-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+          <div>
+            <p className="text-sm font-semibold flex items-center gap-2">
+              <Trophy className="w-4 h-4 text-primary" />
+              Top Renewed Members by Type
+            </p>
+            <p className="text-xs text-muted-foreground">Top 5 members for the selected subscription type</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Repeat2 className="w-5 h-5 text-muted-foreground hidden sm:block" />
+            <Select
+              value={selectedTopSubscriptionType}
+              onValueChange={value => setSelectedTopSubscriptionType(value as SubscriptionTypeKey)}
+            >
+              <SelectTrigger className="w-full sm:w-[150px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SUBSCRIPTION_TYPE_KEYS.map(type => (
+                  <SelectItem key={type} value={type}>
+                    {SUBSCRIPTION_TYPE_LABELS[type]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        {selectedTopSubscriptionGroup.members.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-4 text-center">
+            No {SUBSCRIPTION_TYPE_LABELS[selectedTopSubscriptionType]} records yet
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {selectedTopSubscriptionGroup.members.map((member, index) => (
+              <div key={member.userId} className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900/20 p-3">
+                <div className="w-7 h-7 rounded-full bg-primary/10 text-primary flex items-center justify-center text-sm font-bold shrink-0">
+                  {index + 1}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="font-semibold text-sm truncate">{member.name}</p>
+                  <p className="text-[11px] text-muted-foreground font-mono">{member.userId}</p>
+                </div>
+                <div className="text-right shrink-0">
+                  <p className="font-bold text-sm">{member.subscriptionCount}x</p>
+                  <p className="text-[11px] text-muted-foreground">
+                    {SUBSCRIPTION_TYPE_LABELS[selectedTopSubscriptionType]}
+                  </p>
+                </div>
+                <div className="text-right min-w-[68px]">
+                  <p className="font-bold text-sm">{formatHours(member.totalHoursMs)}</p>
+                  <p className="text-[11px] text-muted-foreground">hours</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
 
       {/* Scanner card */}
       <Card className="p-6 md:p-10 flex flex-col items-center justify-center min-h-[250px] md:min-h-[350px]">
