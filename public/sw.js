@@ -1,4 +1,4 @@
-const CACHE_NAME = 'bacasfitness-v1';
+const CACHE_NAME = 'bacasfitness-v2';
 const OFFLINE_URLS = [
   '/',
   '/logo.png',
@@ -23,6 +23,9 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
+  const url = new URL(event.request.url);
+
+  if (url.pathname.startsWith('/_next/')) return;
 
   event.respondWith(
     fetch(event.request)
