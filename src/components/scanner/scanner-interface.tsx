@@ -774,6 +774,17 @@ export function ScannerInterface() {
         )}
       </div>
 
+      {/* Scanner card */}
+      <Card className="p-8 md:p-10 flex flex-col items-center justify-center min-h-[260px] md:min-h-[380px]">
+        <div className={`p-7 md:p-10 rounded-full ${isScanning ? "bg-primary/20 animate-pulse" : "bg-muted"}`}>
+          <ScanLine className="w-12 h-12 md:w-20 md:h-20 text-primary" />
+        </div>
+        <h2 className="text-2xl md:text-3xl font-bold mt-8 md:mt-10 text-primary">
+          {isScanning ? "Scanning..." : "Ready to Scan"}
+        </h2>
+        <p className="text-muted-foreground mt-3 text-sm md:text-base">Present QR Code to Scanner</p>
+      </Card>
+
       {/* Top stat cards */}
       <div className="grid grid-cols-3 gap-2 md:gap-4">
         <Card className="p-3 md:p-6">
@@ -903,17 +914,6 @@ export function ScannerInterface() {
             ))}
           </div>
         )}
-      </Card>
-
-      {/* Scanner card */}
-      <Card className="p-6 md:p-10 flex flex-col items-center justify-center min-h-[250px] md:min-h-[350px]">
-        <div className={`p-6 md:p-10 rounded-full ${isScanning ? "bg-primary/20 animate-pulse" : "bg-muted"}`}>
-          <ScanLine className="w-12 h-12 md:w-20 md:h-20 text-primary" />
-        </div>
-        <h2 className="text-2xl md:text-3xl font-bold mt-4 md:mt-6">
-          {isScanning ? "Scanning..." : "Ready to Scan"}
-        </h2>
-        <p className="text-muted-foreground mt-2 text-sm md:text-base">Present QR Code to Scanner</p>
       </Card>
 
       {/* ── Members dialog ─────────────────────────────────────────────────── */}
