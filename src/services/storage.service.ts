@@ -11,82 +11,191 @@ import type {
   LiabilityWaiver,
   Payment,
 } from "@/src/types"
-import { supabase } from "./supabase"
 import { offlineCache } from "./offline-cache.service"
 import { offlineQueue } from "./offline-queue.service"
 
-//
-// ==============================
-// USERS
-// ==============================
-//
+type TableName =
+  | "users"
+  | "subscriptions"
+  | "medical_history"
+  | "emergency_contacts"
+  | "liability_waivers"
+  | "scan_logs"
+  | "active_sessions"
+  | "subscription_history"
+  | "user_id_counter"
+  | "payment"
 
-export async function getUsers(): Promise<User[]> {
-  const { data, error } = await supabase
-    .from("users")
-    .select("*")
-    .order("created_at", { ascending: false })
+type DbRow = Record<string, any>
+type ListCacheEntry = { expiresAt: number; rows: DbRow[] }
 
-  if (error) {
-    console.error("Error fetching users:", error)
-    return offlineCache.getCachedUsers()
+const tableNames: TableName[] = [
+  "users",
+  "subscriptions",
+  "medical_history",
+  "emergency_contacts",
+  "liability_waivers",
+  "scan_logs",
+  "active_sessions",
+  "subscription_history",
+  "user_id_counter",
+  "payment",
+]
+const listCacheTtlMs = 30_000
+const listCache = new Map<TableName, ListCacheEntry>()
+let snapshotRequest: Promise<Record<TableName, DbRow[]>> | null = null
+
+async function excelRequest<T>(
+  table: TableName,
+  action: "list" | "get" | "insert" | "update" | "delete",
+  payload: Record<string, unknown> = {},
+): Promise<T> {
+  const response = await fetch("/api/excel-db", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ table, action, ...payload }),
+  })
+
+  const result = await response.json().catch(() => null)
+  if (!response.ok || !result?.success) {
+    throw new Error(result?.message || `Excel database request failed: ${table}.${action}`)
   }
 
-  const users = (data || []).map((user) => ({
-    userId: user.user_id,
-    name: user.name,
-    email: user.email,
-    phone: user.phone,
-    birthday: user.birthday,
-    age: user.age,
-    address: user.address,
-    goal: user.goal,
-    programType: user.program_type,
-    heightCm: user.height_cm,
-    weightKg: user.weight_kg,
-    createdAt: user.created_at,
-    updatedAt: user.updated_at,
-  }))
-  offlineCache.cacheUsers(users)
-  return users
+  if (typeof window !== "undefined" && ["insert", "update", "delete"].includes(action)) {
+    clearListCache(table)
+    window.dispatchEvent(
+      new CustomEvent("excel-db-change", {
+        detail: { table, action, triggeredAt: new Date().toISOString() },
+      }),
+    )
+  }
+
+  return result.data as T
 }
 
-export async function getUserById(userId: string): Promise<User | null> {
-  const { data, error } = await supabase
-    .from("users")
-    .select("*")
-    .eq("user_id", userId)
-    .maybeSingle()
-
-  if (error || !data) {
-    return offlineCache.getCachedUser(userId)
+function getCachedRows(table: TableName): DbRow[] | null {
+  const cached = listCache.get(table)
+  if (!cached || cached.expiresAt < Date.now()) {
+    listCache.delete(table)
+    return null
   }
-
-  const user: User = {
-    userId: data.user_id,
-    name: data.name,
-    email: data.email,
-    phone: data.phone,
-    birthday: data.birthday,
-    age: data.age,
-    address: data.address,
-    goal: data.goal,
-    programType: data.program_type,
-    heightCm: data.height_cm,
-    weightKg: data.weight_kg,
-    createdAt: data.created_at,
-    updatedAt: data.updated_at,
-  }
-  offlineCache.cacheUser(user)
-  return user
+  return cached.rows
 }
 
-export async function addUser(user: User): Promise<void> {
-  const insertData = {
+function setCachedRows(table: TableName, rows: DbRow[]): void {
+  listCache.set(table, {
+    rows,
+    expiresAt: Date.now() + listCacheTtlMs,
+  })
+}
+
+function clearListCache(table?: TableName): void {
+  if (table) {
+    listCache.delete(table)
+  } else {
+    listCache.clear()
+  }
+  snapshotRequest = null
+}
+
+async function loadSnapshot(): Promise<Record<TableName, DbRow[]>> {
+  if (!snapshotRequest) {
+    snapshotRequest = fetch("/api/excel-db", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "batchList", tables: tableNames }),
+    })
+      .then(async (response) => {
+        const result = await response.json().catch(() => null)
+        if (!response.ok || !result?.success) {
+          throw new Error(result?.message || "Excel database batch request failed")
+        }
+        return result.data as Record<TableName, DbRow[]>
+      })
+      .then((snapshot) => {
+        for (const table of tableNames) {
+          setCachedRows(table, Array.isArray(snapshot[table]) ? snapshot[table] : [])
+        }
+        return snapshot
+      })
+      .finally(() => {
+        snapshotRequest = null
+      })
+  }
+
+  return snapshotRequest
+}
+
+async function listRows(table: TableName): Promise<DbRow[]> {
+  const cached = getCachedRows(table)
+  if (cached) return cached
+
+  try {
+    const snapshot = await loadSnapshot()
+    return Array.isArray(snapshot[table]) ? snapshot[table] : []
+  } catch (error) {
+    console.warn("Batch database load failed, falling back to single-table load:", error)
+    const rows = await excelRequest<DbRow[]>(table, "list")
+    setCachedRows(table, rows)
+    return rows
+  }
+}
+
+async function getRow(table: TableName, id: string | number): Promise<DbRow | null> {
+  const cached = getCachedRows(table)
+  if (cached) {
+    const primaryKey = table === "payment"
+      ? "payment_id"
+      : table === "scan_logs" || table === "subscription_history" || table === "user_id_counter"
+        ? "id"
+        : "user_id"
+    return cached.find((row) => String(row[primaryKey] ?? "") === String(id)) || null
+  }
+
+  return excelRequest<DbRow | null>(table, "get", { id })
+}
+
+function toNumber(value: unknown): number | undefined {
+  if (value === null || value === undefined || value === "") return undefined
+  const numberValue = Number(value)
+  return Number.isFinite(numberValue) ? numberValue : undefined
+}
+
+function toBoolean(value: unknown): boolean {
+  if (typeof value === "boolean") return value
+  if (typeof value === "number") return value !== 0
+  return String(value ?? "").toLowerCase() === "true"
+}
+
+function byDateDesc(field: string) {
+  return (left: DbRow, right: DbRow) =>
+    new Date(right[field] || 0).getTime() - new Date(left[field] || 0).getTime()
+}
+
+function userFromRow(row: DbRow): User {
+  return {
+    userId: String(row.user_id),
+    name: row.name || "",
+    email: row.email || undefined,
+    phone: row.phone || undefined,
+    birthday: row.birthday || undefined,
+    age: toNumber(row.age),
+    address: row.address || undefined,
+    goal: row.goal || undefined,
+    programType: row.program_type || undefined,
+    heightCm: toNumber(row.height_cm),
+    weightKg: toNumber(row.weight_kg),
+    createdAt: row.created_at || new Date().toISOString(),
+    updatedAt: row.updated_at || row.created_at || new Date().toISOString(),
+  }
+}
+
+function userToRow(user: User): DbRow {
+  return {
     user_id: user.userId,
     name: user.name,
-    email: user.email,
-    phone: user.phone,
+    email: user.email || null,
+    phone: user.phone || null,
     birthday: user.birthday || null,
     age: user.age || null,
     address: user.address || null,
@@ -97,212 +206,60 @@ export async function addUser(user: User): Promise<void> {
     created_at: user.createdAt,
     updated_at: user.updatedAt,
   }
-
-  console.log("Inserting user:", insertData)
-
-  const { data, error } = await supabase
-    .from("users")
-    .insert([insertData])
-    .select()
-
-  if (error) {
-    console.error("Error adding user:", JSON.stringify(error, null, 2))
-    console.error("Error details:", error)
-    throw new Error(`User insert failed: ${error.message || JSON.stringify(error)}`)
-  }
-
-  console.log("User created successfully:", data)
 }
 
-export async function updateUser(
-  userId: string,
-  updates: Partial<User>,
-): Promise<void> {
-  const updateData: Record<string, unknown> = {
-    updated_at: new Date().toISOString(),
-  }
-
-  if (updates.name !== undefined) updateData.name = updates.name
-  if (updates.email !== undefined) updateData.email = updates.email
-  if (updates.phone !== undefined) updateData.phone = updates.phone
-  if (updates.birthday !== undefined) updateData.birthday = updates.birthday || null
-  if (updates.age !== undefined) updateData.age = updates.age || null
-  if (updates.address !== undefined) updateData.address = updates.address || null
-  if (updates.goal !== undefined) updateData.goal = updates.goal || null
-  if (updates.programType !== undefined) updateData.program_type = updates.programType || null
-  if (updates.heightCm !== undefined) updateData.height_cm = updates.heightCm || null
-  if (updates.weightKg !== undefined) updateData.weight_kg = updates.weightKg || null
-
-  const { error } = await supabase
-    .from("users")
-    .update(updateData)
-    .eq("user_id", userId)
-
-  if (error) console.error("Error updating user:", error)
-}
-
-export async function deleteUser(userId: string): Promise<void> {
-  const { error } = await supabase.from("users").delete().eq("user_id", userId)
-  if (error) console.error("Error deleting user:", error)
-}
-
-//
-// ==============================
-// SUBSCRIPTIONS
-// ==============================
-//
-
-export async function getSubscriptions(): Promise<Subscription[]> {
-  const { data, error } = await supabase.from("subscriptions").select("*")
-  if (error) return offlineCache.getCachedSubscriptions()
-
-  const subs = (data || []).map((sub) => ({
-    userId: sub.user_id,
-    startDate: sub.start_date,
-    endDate: sub.end_date,
-    status: sub.status,
-    planDuration: sub.plan_duration,
-    membershipType: sub.membership_type,
-    coachingPreference: sub.coaching_preference,
-    paymentStatus: sub.payment_status,
-    paymentDate: sub.payment_date,
-    createdAt: sub.created_at,
-  }))
-  offlineCache.cacheSubscriptions(subs)
-  return subs
-}
-
-export async function getSubscriptionByUserId(
-  userId: string,
-): Promise<Subscription | null> {
-  const { data, error } = await supabase
-    .from("subscriptions")
-    .select("*")
-    .eq("user_id", userId)
-    .maybeSingle()
-
-  if (error || !data) {
-    return offlineCache.getCachedSubscription(userId)
-  }
-
-  const sub: Subscription = {
-    userId: data.user_id,
-    startDate: data.start_date,
-    endDate: data.end_date,
-    status: data.status,
-    planDuration: data.plan_duration,
-    membershipType: data.membership_type,
-    coachingPreference: data.coaching_preference,
-    paymentStatus: data.payment_status,
-    paymentDate: data.payment_date,
-    createdAt: data.created_at,
-  }
-  offlineCache.cacheSubscription(sub)
-  return sub
-}
-
-export async function addOrUpdateSubscription(
-  subscription: Subscription,
-): Promise<void> {
-  const existing = await getSubscriptionByUserId(subscription.userId)
-
-  if (existing) {
-    await archiveSubscription(existing)
-
-    const updateData = {
-      start_date: subscription.startDate,
-      end_date: subscription.endDate,
-      status: subscription.status,
-      plan_duration: subscription.planDuration || null,
-      membership_type: subscription.membershipType || null,
-      coaching_preference: subscription.coachingPreference ?? false,
-      payment_status: subscription.paymentStatus ?? "not paid",
-      payment_date: subscription.paymentDate || null,
-    }
-
-    console.log("Updating subscription:", updateData)
-
-    const { data, error } = await supabase
-      .from("subscriptions")
-      .update(updateData)
-      .eq("user_id", subscription.userId)
-      .select()
-
-    if (error) {
-      console.error("Error updating subscription:", JSON.stringify(error, null, 2))
-      throw new Error(`Subscription update failed: ${error.message || JSON.stringify(error)}`)
-    }
-  } else {
-    const insertData = {
-      user_id: subscription.userId,
-      start_date: subscription.startDate,
-      end_date: subscription.endDate,
-      status: subscription.status,
-      plan_duration: subscription.planDuration || null,
-      membership_type: subscription.membershipType || null,
-      coaching_preference: subscription.coachingPreference ?? false,
-      payment_status: subscription.paymentStatus ?? "not paid",
-      payment_date: subscription.paymentDate || null,
-      created_at: subscription.createdAt,
-    }
-
-    console.log("Inserting subscription:", insertData)
-
-    const { data, error } = await supabase
-      .from("subscriptions")
-      .insert([insertData])
-      .select()
-
-    if (error) {
-      console.error("Error adding subscription:", JSON.stringify(error, null, 2))
-      console.error("Error details:", error)
-      throw new Error(`Subscription insert failed: ${error.message || JSON.stringify(error)}`)
-    }
-
-    console.log("Subscription created successfully:", data)
-  }
-}
-
-//
-// ==============================
-// MEDICAL HISTORY
-// ==============================
-//
-
-export async function getMedicalHistory(
-  userId: string,
-): Promise<MedicalHistory | null> {
-  const { data, error } = await supabase
-    .from("medical_history")
-    .select("*")
-    .eq("user_id", userId)
-    .maybeSingle()
-
-  if (error || !data) return null
-
+function subscriptionFromRow(row: DbRow): Subscription {
   return {
-    userId: data.user_id,
-    heartProblems: data.heart_problems,
-    bloodPressureProblems: data.blood_pressure_problems,
-    chestPainExercising: data.chest_pain_exercising,
-    asthmaBreathingProblems: data.asthma_breathing_problems,
-    jointProblems: data.joint_problems,
-    neckBackProblems: data.neck_back_problems,
-    pregnantRecentBirth: data.pregnant_recent_birth,
-    otherMedicalConditions: data.other_medical_conditions,
-    otherMedicalDetails: data.other_medical_details,
-    smoking: data.smoking,
-    medication: data.medication,
-    medicationDetails: data.medication_details,
-    createdAt: data.created_at,
-    updatedAt: data.updated_at,
+    userId: String(row.user_id),
+    startDate: row.start_date,
+    endDate: row.end_date,
+    status: row.status,
+    planDuration: row.plan_duration || null,
+    membershipType: row.membership_type || undefined,
+    coachingPreference: toBoolean(row.coaching_preference),
+    paymentStatus: row.payment_status || undefined,
+    paymentDate: row.payment_date || undefined,
+    createdAt: row.created_at || new Date().toISOString(),
   }
 }
 
-export async function addMedicalHistory(
-  medicalHistory: MedicalHistory,
-): Promise<void> {
-  const insertData = {
+function subscriptionToRow(subscription: Subscription): DbRow {
+  return {
+    user_id: subscription.userId,
+    start_date: subscription.startDate,
+    end_date: subscription.endDate,
+    status: subscription.status,
+    plan_duration: subscription.planDuration || null,
+    membership_type: subscription.membershipType || null,
+    coaching_preference: subscription.coachingPreference ?? false,
+    payment_status: subscription.paymentStatus ?? "not paid",
+    payment_date: subscription.paymentDate || null,
+    created_at: subscription.createdAt,
+  }
+}
+
+function medicalHistoryFromRow(row: DbRow): MedicalHistory {
+  return {
+    userId: String(row.user_id),
+    heartProblems: toBoolean(row.heart_problems),
+    bloodPressureProblems: toBoolean(row.blood_pressure_problems),
+    chestPainExercising: toBoolean(row.chest_pain_exercising),
+    asthmaBreathingProblems: toBoolean(row.asthma_breathing_problems),
+    jointProblems: toBoolean(row.joint_problems),
+    neckBackProblems: toBoolean(row.neck_back_problems),
+    pregnantRecentBirth: toBoolean(row.pregnant_recent_birth),
+    otherMedicalConditions: toBoolean(row.other_medical_conditions),
+    otherMedicalDetails: row.other_medical_details || undefined,
+    smoking: toBoolean(row.smoking),
+    medication: toBoolean(row.medication),
+    medicationDetails: row.medication_details || undefined,
+    createdAt: row.created_at || new Date().toISOString(),
+    updatedAt: row.updated_at || row.created_at || new Date().toISOString(),
+  }
+}
+
+function medicalHistoryToRow(medicalHistory: MedicalHistory): DbRow {
+  return {
     user_id: medicalHistory.userId,
     heart_problems: medicalHistory.heartProblems,
     blood_pressure_problems: medicalHistory.bloodPressureProblems,
@@ -319,626 +276,127 @@ export async function addMedicalHistory(
     created_at: medicalHistory.createdAt,
     updated_at: medicalHistory.updatedAt,
   }
-
-  const { data, error } = await supabase
-    .from("medical_history")
-    .insert([insertData])
-    .select()
-
-  if (error) {
-    console.error("Error adding medical history:", JSON.stringify(error, null, 2))
-    throw new Error(`Medical history insert failed: ${error.message || JSON.stringify(error)}`)
-  }
 }
 
-export async function updateMedicalHistory(
-  userId: string,
-  updates: Partial<MedicalHistory>,
-): Promise<void> {
-  const updateData: Record<string, unknown> = {
-    updated_at: new Date().toISOString(),
-  }
-
-  if (updates.heartProblems !== undefined) updateData.heart_problems = updates.heartProblems
-  if (updates.bloodPressureProblems !== undefined) updateData.blood_pressure_problems = updates.bloodPressureProblems
-  if (updates.chestPainExercising !== undefined) updateData.chest_pain_exercising = updates.chestPainExercising
-  if (updates.asthmaBreathingProblems !== undefined) updateData.asthma_breathing_problems = updates.asthmaBreathingProblems
-  if (updates.jointProblems !== undefined) updateData.joint_problems = updates.jointProblems
-  if (updates.neckBackProblems !== undefined) updateData.neck_back_problems = updates.neckBackProblems
-  if (updates.pregnantRecentBirth !== undefined) updateData.pregnant_recent_birth = updates.pregnantRecentBirth
-  if (updates.otherMedicalConditions !== undefined) updateData.other_medical_conditions = updates.otherMedicalConditions
-  if (updates.otherMedicalDetails !== undefined) updateData.other_medical_details = updates.otherMedicalDetails || null
-  if (updates.smoking !== undefined) updateData.smoking = updates.smoking
-  if (updates.medication !== undefined) updateData.medication = updates.medication
-  if (updates.medicationDetails !== undefined) updateData.medication_details = updates.medicationDetails || null
-
-  const { error } = await supabase
-    .from("medical_history")
-    .update(updateData)
-    .eq("user_id", userId)
-
-  if (error) console.error("Error updating medical history:", error)
-}
-
-//
-// ==============================
-// EMERGENCY CONTACTS
-// ==============================
-//
-
-export async function getEmergencyContact(
-  userId: string,
-): Promise<EmergencyContact | null> {
-  const { data, error } = await supabase
-    .from("emergency_contacts")
-    .select("*")
-    .eq("user_id", userId)
-    .maybeSingle()
-
-  if (error || !data) return null
-
+function emergencyContactFromRow(row: DbRow): EmergencyContact {
   return {
-    userId: data.user_id,
-    contactName: data.contact_name,
-    contactNumber: data.contact_number,
-    createdAt: data.created_at,
-    updatedAt: data.updated_at,
+    userId: String(row.user_id),
+    contactName: row.contact_name || "",
+    contactNumber: row.contact_number || "",
+    createdAt: row.created_at || new Date().toISOString(),
+    updatedAt: row.updated_at || row.created_at || new Date().toISOString(),
   }
 }
 
-export async function addEmergencyContact(
-  emergencyContact: EmergencyContact,
-): Promise<void> {
-  const insertData = {
-    user_id: emergencyContact.userId,
-    contact_name: emergencyContact.contactName,
-    contact_number: emergencyContact.contactNumber,
-    created_at: emergencyContact.createdAt,
-    updated_at: emergencyContact.updatedAt,
-  }
-
-  const { data, error } = await supabase
-    .from("emergency_contacts")
-    .insert([insertData])
-    .select()
-
-  if (error) {
-    console.error("Error adding emergency contact:", JSON.stringify(error, null, 2))
-    throw new Error(`Emergency contact insert failed: ${error.message || JSON.stringify(error)}`)
-  }
-}
-
-export async function updateEmergencyContact(
-  userId: string,
-  updates: Partial<EmergencyContact>,
-): Promise<void> {
-  const updateData: Record<string, unknown> = {
-    updated_at: new Date().toISOString(),
-  }
-
-  if (updates.contactName !== undefined) updateData.contact_name = updates.contactName
-  if (updates.contactNumber !== undefined) updateData.contact_number = updates.contactNumber
-
-  const { error } = await supabase
-    .from("emergency_contacts")
-    .update(updateData)
-    .eq("user_id", userId)
-
-  if (error) console.error("Error updating emergency contact:", error)
-}
-
-//
-// ==============================
-// LIABILITY WAIVERS
-// ==============================
-//
-
-export async function getLiabilityWaiver(
-  userId: string,
-): Promise<LiabilityWaiver | null> {
-  const { data, error } = await supabase
-    .from("liability_waivers")
-    .select("*")
-    .eq("user_id", userId)
-    .maybeSingle()
-
-  if (error || !data) return null
-
+function emergencyContactToRow(contact: EmergencyContact): DbRow {
   return {
-    userId: data.user_id,
-    signatureName: data.signature_name,
-    signedDate: data.signed_date,
-    waiverAccepted: data.waiver_accepted,
-    createdAt: data.created_at,
+    user_id: contact.userId,
+    contact_name: contact.contactName,
+    contact_number: contact.contactNumber,
+    created_at: contact.createdAt,
+    updated_at: contact.updatedAt,
   }
 }
 
-export async function addLiabilityWaiver(
-  liabilityWaiver: LiabilityWaiver,
-): Promise<void> {
-  const insertData = {
-    user_id: liabilityWaiver.userId,
-    signature_name: liabilityWaiver.signatureName,
-    signed_date: liabilityWaiver.signedDate,
-    waiver_accepted: liabilityWaiver.waiverAccepted,
-    created_at: liabilityWaiver.createdAt,
-  }
-
-  const { data, error } = await supabase
-    .from("liability_waivers")
-    .insert([insertData])
-    .select()
-
-  if (error) {
-    console.error("Error adding liability waiver:", JSON.stringify(error, null, 2))
-    throw new Error(`Liability waiver insert failed: ${error.message || JSON.stringify(error)}`)
+function liabilityWaiverFromRow(row: DbRow): LiabilityWaiver {
+  return {
+    userId: String(row.user_id),
+    signatureName: row.signature_name || "",
+    signedDate: row.signed_date || "",
+    waiverAccepted: toBoolean(row.waiver_accepted),
+    createdAt: row.created_at || new Date().toISOString(),
   }
 }
 
-//
-// ==============================
-// SCAN LOGS
-// ==============================
-//
-
-export async function getScanLogs(): Promise<ScanLog[]> {
-  // Fetches ALL logs with no cap using pagination (Supabase default limit is 1000)
-  let allLogs: any[] = []
-  let from = 0
-  const batchSize = 1000
-
-  while (true) {
-    const { data, error } = await supabase
-      .from("scan_logs")
-      .select("*")
-      .order("timestamp", { ascending: false })
-      .range(from, from + batchSize - 1)
-
-    if (error || !data || data.length === 0) break
-
-    allLogs = allLogs.concat(data)
-
-    if (data.length < batchSize) break // last page reached
-
-    from += batchSize
+function liabilityWaiverToRow(waiver: LiabilityWaiver): DbRow {
+  return {
+    user_id: waiver.userId,
+    signature_name: waiver.signatureName,
+    signed_date: waiver.signedDate,
+    waiver_accepted: waiver.waiverAccepted,
+    created_at: waiver.createdAt,
   }
-
-  return allLogs.map((log) => ({
-    id: log.id,
-    userId: log.user_id,
-    userName: log.user_name,
-    timestamp: log.timestamp,
-    action: log.action,
-    status: log.status,
-  }))
 }
 
-export async function addScanLog(log: ScanLog): Promise<void> {
-  if (!log.userId || !log.action || !log.status || !log.timestamp) {
-    console.error("Invalid scan log:", log)
-    return
+function scanLogFromRow(row: DbRow): ScanLog {
+  return {
+    id: String(row.id),
+    userId: String(row.user_id),
+    userName: row.user_name || "",
+    timestamp: row.timestamp || "",
+    action: row.action,
+    status: row.status,
   }
+}
 
-  const insertData = {
+function scanLogToRow(log: ScanLog): DbRow {
+  return {
+    id: log.id || `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
     user_id: log.userId,
     user_name: log.userName,
     timestamp: log.timestamp,
     action: log.action,
     status: log.status,
   }
+}
 
-  const { error } = await supabase.from("scan_logs").insert([insertData])
-
-  if (error) {
-    console.error("Error adding scan log, queuing offline:", error)
-    offlineQueue.enqueue("scan_logs", "insert", insertData)
+function activeSessionFromRow(row: DbRow): ActiveSession {
+  return {
+    userId: String(row.user_id),
+    userName: row.user_name || "",
+    checkInTime: row.check_in_time || "",
   }
 }
 
-export async function getTodayScanLogs(): Promise<ScanLog[]> {
-  const nowPH = new Date().toLocaleString("en-US", { timeZone: "Asia/Manila" })
-  const todayPH = new Date(nowPH)
-
-  const startOfDayPH = new Date(todayPH)
-  startOfDayPH.setHours(0, 0, 0, 0)
-
-  const endOfDayPH = new Date(todayPH)
-  endOfDayPH.setHours(23, 59, 59, 999)
-
-  const { data, error } = await supabase
-    .from("scan_logs")
-    .select("*")
-    .gte("timestamp", startOfDayPH.toISOString())
-    .lte("timestamp", endOfDayPH.toISOString())
-    .order("timestamp", { ascending: false })
-
-  if (error) return []
-
-  return (data || []).map((log) => ({
-    id: log.id,
-    userId: log.user_id,
-    userName: log.user_name,
-    timestamp: log.timestamp,
-    action: log.action,
-    status: log.status,
-  }))
-}
-
-export async function getScanLogsByUserId(
-  userId: string,
-): Promise<ScanLog[]> {
-  const { data, error } = await supabase
-    .from("scan_logs")
-    .select("*")
-    .eq("user_id", userId)
-    .order("timestamp", { ascending: false })
-
-  if (error) return []
-
-  return (data || []).map((log) => ({
-    id: log.id,
-    userId: log.user_id,
-    userName: log.user_name,
-    timestamp: log.timestamp,
-    action: log.action,
-    status: log.status,
-  }))
-}
-
-//
-// ==============================
-// ACTIVE SESSIONS
-// ==============================
-//
-
-export async function getActiveSessionByUserId(
-  userId: string,
-): Promise<ActiveSession | null> {
-  const { data, error } = await supabase
-    .from("active_sessions")
-    .select("*")
-    .eq("user_id", userId)
-    .limit(1)
-    .maybeSingle()
-
-  if (error || !data) {
-    return offlineCache.getCachedActiveSession(userId)
-  }
-
-  const session: ActiveSession = {
-    userId: data.user_id,
-    userName: data.user_name,
-    checkInTime: data.check_in_time,
-  }
-  offlineCache.updateCachedSession(userId, session)
-  return session
-}
-
-export async function getActiveSessions(): Promise<ActiveSession[]> {
-  const { data, error } = await supabase
-    .from("active_sessions")
-    .select("*")
-    .order("check_in_time", { ascending: false })
-
-  if (error) return offlineCache.getCachedActiveSessions()
-
-  const sessions = (data || []).map((s) => ({
-    userId: s.user_id,
-    userName: s.user_name,
-    checkInTime: s.check_in_time,
-  }))
-  offlineCache.cacheActiveSessions(sessions)
-  return sessions
-}
-
-export async function isUserCheckedIn(userId: string): Promise<boolean> {
-  const session = await getActiveSessionByUserId(userId)
-  return !!session
-}
-
-export async function startSession(session: ActiveSession): Promise<void> {
-  const insertData = {
+function activeSessionToRow(session: ActiveSession): DbRow {
+  return {
     user_id: session.userId,
     user_name: session.userName,
     check_in_time: session.checkInTime,
   }
-
-  const { error } = await supabase.from("active_sessions").insert([insertData])
-
-  if (error) {
-    console.error("Error starting session, queuing offline:", error)
-    offlineQueue.enqueue("active_sessions", "insert", insertData)
-  }
-
-  // Always update local cache so offline check-in/out flow works
-  offlineCache.updateCachedSession(session.userId, session)
 }
 
-export async function endSession(
-  userId: string,
-): Promise<ActiveSession | null> {
-  const session = await getActiveSessionByUserId(userId)
-  if (!session) return null
-
-  const { error } = await supabase
-    .from("active_sessions")
-    .delete()
-    .eq("user_id", userId)
-
-  if (error) {
-    console.error("Error ending session, queuing offline:", error)
-    offlineQueue.enqueue("active_sessions", "delete", {
-      _deleteKey: "user_id",
-      _deleteValue: userId,
-    })
-  }
-
-  // Always update local cache so offline flow works
-  offlineCache.updateCachedSession(userId, null)
-
-  return session
-}
-
-//
-// ==============================
-// USER ID GENERATION
-// ==============================
-//
-
-export async function generateUserId(): Promise<string> {
-  const { data, error } = await supabase
-    .from("user_id_counter")
-    .select("last_number")
-    .single()
-
-  if (error || !data) return "BCF-1001"
-
-  const next = data.last_number + 1
-
-  await supabase.from("user_id_counter").update({ last_number: next }).eq("id", 1)
-
-  return `BCF-${next}`
-}
-
-//
-// ==============================
-// SUBSCRIPTION HISTORY
-// ==============================
-//
-
-export async function getSubscriptionHistory(
-  userId?: string,
-): Promise<SubscriptionHistory[]> {
-  let query = supabase
-    .from("subscription_history")
-    .select("*")
-    .order("created_at", { ascending: false })
-
-  if (userId) query = query.eq("user_id", userId)
-
-  const { data, error } = await query
-  if (error) return []
-
-  return (data || []).map((h) => ({
-    id: h.id,
-    userId: h.user_id,
-    startDate: h.start_date,
-    endDate: h.end_date,
-    status: h.status,
-    createdAt: h.created_at,
-    updatedAt: h.updated_at,
-  }))
-}
-
-export async function archiveSubscription(
-  subscription: Subscription,
-): Promise<void> {
-  const archivedStatus = subscription.status === "cancelled" ? "cancelled" : "expired"
-
-  const { error } = await supabase.from("subscription_history").insert([
-    {
-      id: `${subscription.userId}-${Date.now()}`,
-      user_id: subscription.userId,
-      start_date: subscription.startDate,
-      end_date: subscription.endDate,
-      status: archivedStatus,
-      created_at: subscription.createdAt,
-      updated_at: new Date().toISOString(),
-    },
-  ])
-
-  if (error) console.error("Error archiving subscription:", error)
-}
-
-//
-// ==============================
-// BULK USERS
-// ==============================
-//
-
-export async function addUsers(users: User[]): Promise<void> {
-  const { error } = await supabase.from("users").insert(
-    users.map((u) => ({
-      user_id: u.userId,
-      name: u.name,
-      email: u.email,
-      phone: u.phone,
-      birthday: u.birthday || null,
-      age: u.age || null,
-      address: u.address || null,
-      goal: u.goal || null,
-      program_type: u.programType || null,
-      height_cm: u.heightCm || null,
-      weight_kg: u.weightKg || null,
-      created_at: u.createdAt,
-      updated_at: u.updatedAt,
-    })),
-  )
-
-  if (error) console.error("Error bulk adding users:", error)
-}
-
-//
-// ==============================
-// BULK FETCH (for backup)
-// ==============================
-//
-
-export async function getAllMedicalHistories(): Promise<MedicalHistory[]> {
-  const { data, error } = await supabase
-    .from("medical_history")
-    .select("*")
-
-  if (error || !data) return []
-
-  return data.map((d) => ({
-    userId: d.user_id,
-    heartProblems: d.heart_problems,
-    bloodPressureProblems: d.blood_pressure_problems,
-    chestPainExercising: d.chest_pain_exercising,
-    asthmaBreathingProblems: d.asthma_breathing_problems,
-    jointProblems: d.joint_problems,
-    neckBackProblems: d.neck_back_problems,
-    pregnantRecentBirth: d.pregnant_recent_birth,
-    otherMedicalConditions: d.other_medical_conditions,
-    otherMedicalDetails: d.other_medical_details || undefined,
-    smoking: d.smoking,
-    medication: d.medication,
-    medicationDetails: d.medication_details || undefined,
-    createdAt: d.created_at,
-    updatedAt: d.updated_at,
-  }))
-}
-
-export async function getAllEmergencyContacts(): Promise<EmergencyContact[]> {
-  const { data, error } = await supabase
-    .from("emergency_contacts")
-    .select("*")
-
-  if (error || !data) return []
-
-  return data.map((d) => ({
-    userId: d.user_id,
-    contactName: d.contact_name,
-    contactNumber: d.contact_number,
-    createdAt: d.created_at,
-    updatedAt: d.updated_at,
-  }))
-}
-
-export async function getAllLiabilityWaivers(): Promise<LiabilityWaiver[]> {
-  const { data, error } = await supabase
-    .from("liability_waivers")
-    .select("*")
-
-  if (error || !data) return []
-
-  return data.map((d) => ({
-    userId: d.user_id,
-    signatureName: d.signature_name,
-    signedDate: d.signed_date,
-    waiverAccepted: d.waiver_accepted,
-    createdAt: d.created_at,
-  }))
-}
-
-export async function getUserIdCounter(): Promise<{ id: number; lastNumber: number } | null> {
-  const { data, error } = await supabase
-    .from("user_id_counter")
-    .select("*")
-    .single()
-
-  if (error || !data) return null
-
+function subscriptionHistoryFromRow(row: DbRow): SubscriptionHistory {
   return {
-    id: data.id,
-    lastNumber: data.last_number,
+    id: String(row.id),
+    userId: String(row.user_id),
+    startDate: row.start_date,
+    endDate: row.end_date,
+    status: row.status,
+    createdAt: row.created_at || new Date().toISOString(),
+    updatedAt: row.updated_at || row.created_at || new Date().toISOString(),
   }
 }
 
-//
-// ==============================
-// PAYMENTS
-// ==============================
-//
-
-export async function generatePaymentId(): Promise<string> {
-  const prefix = 'PAY'
-  const timestamp = Date.now().toString(36).toUpperCase()
-  const random = Math.random().toString(36).substring(2, 8).toUpperCase()
-  return `${prefix}-${timestamp}-${random}`
-}
-
-export async function getPayments(): Promise<Payment[]> {
-  const { data, error } = await supabase
-    .from("payment")
-    .select("*")
-    .order("created_at", { ascending: false })
-
-  if (error || !data) return []
-
-  return data.map((p) => ({
-    paymentId: p.payment_id,
-    userId: p.user_id,
-    amount: p.amount,
-    paymentMethod: p.payment_method,
-    paymentDate: p.payment_date,
-    referenceNumber: p.reference_number,
-    notes: p.notes,
-    paymentFor: p.payment_for,
-    createdAt: p.created_at,
-    updatedAt: p.updated_at,
-  }))
-}
-
-export async function getPaymentsByUserId(userId: string): Promise<Payment[]> {
-  const { data, error } = await supabase
-    .from("payment")
-    .select("*")
-    .eq("user_id", userId)
-    .order("payment_date", { ascending: false })
-
-  if (error || !data) return []
-
-  return data.map((p) => ({
-    paymentId: p.payment_id,
-    userId: p.user_id,
-    amount: p.amount,
-    paymentMethod: p.payment_method,
-    paymentDate: p.payment_date,
-    referenceNumber: p.reference_number,
-    notes: p.notes,
-    paymentFor: p.payment_for,
-    createdAt: p.created_at,
-    updatedAt: p.updated_at,
-  }))
-}
-
-export async function getPaymentById(paymentId: string): Promise<Payment | null> {
-  const { data, error } = await supabase
-    .from("payment")
-    .select("*")
-    .eq("payment_id", paymentId)
-    .maybeSingle()
-
-  if (error || !data) return null
-
+function subscriptionHistoryToRow(history: SubscriptionHistory): DbRow {
   return {
-    paymentId: data.payment_id,
-    userId: data.user_id,
-    amount: data.amount,
-    paymentMethod: data.payment_method,
-    paymentDate: data.payment_date,
-    referenceNumber: data.reference_number,
-    notes: data.notes,
-    paymentFor: data.payment_for,
-    createdAt: data.created_at,
-    updatedAt: data.updated_at,
+    id: history.id,
+    user_id: history.userId,
+    start_date: history.startDate,
+    end_date: history.endDate,
+    status: history.status,
+    created_at: history.createdAt,
+    updated_at: history.updatedAt,
   }
 }
 
-export async function addPayment(payment: Payment): Promise<void> {
-  const insertData = {
+function paymentFromRow(row: DbRow): Payment {
+  return {
+    paymentId: String(row.payment_id),
+    userId: String(row.user_id),
+    amount: Number(row.amount || 0),
+    paymentMethod: row.payment_method,
+    paymentDate: row.payment_date,
+    referenceNumber: row.reference_number || undefined,
+    notes: row.notes || undefined,
+    paymentFor: row.payment_for,
+    createdAt: row.created_at || new Date().toISOString(),
+    updatedAt: row.updated_at || row.created_at || new Date().toISOString(),
+  }
+}
+
+function paymentToRow(payment: Payment): DbRow {
+  return {
     payment_id: payment.paymentId,
     user_id: payment.userId,
     amount: payment.amount,
@@ -950,60 +408,332 @@ export async function addPayment(payment: Payment): Promise<void> {
     created_at: payment.createdAt,
     updated_at: payment.updatedAt,
   }
-
-  console.log("Inserting payment:", insertData)
-
-  const { data, error } = await supabase
-    .from("payment")
-    .insert([insertData])
-    .select()
-
-  if (error) {
-    console.error("Error adding payment:", JSON.stringify(error, null, 2))
-    console.error("Error details:", error)
-    throw new Error(`Payment insert failed: ${error.message || JSON.stringify(error)}`)
-  }
-
-  console.log("Payment created successfully:", data)
 }
 
-export async function updatePayment(
-  paymentId: string,
-  updates: Partial<Payment>,
-): Promise<void> {
-  const updateData: Record<string, unknown> = {
-    updated_at: new Date().toISOString(),
+export async function getUsers(): Promise<User[]> {
+  try {
+    const users = (await listRows("users")).sort(byDateDesc("created_at")).map(userFromRow)
+    offlineCache.cacheUsers(users)
+    return users
+  } catch (error) {
+    console.error("Error fetching users:", error)
+    return offlineCache.getCachedUsers()
+  }
+}
+
+export async function getUserById(userId: string): Promise<User | null> {
+  try {
+    const row = await getRow("users", userId)
+    if (!row) return offlineCache.getCachedUser(userId)
+    const user = userFromRow(row)
+    offlineCache.cacheUser(user)
+    return user
+  } catch {
+    return offlineCache.getCachedUser(userId)
+  }
+}
+
+export async function addUser(user: User): Promise<void> {
+  await excelRequest("users", "insert", { row: userToRow(user) })
+  offlineCache.cacheUser(user)
+}
+
+export async function updateUser(userId: string, updates: Partial<User>): Promise<void> {
+  const current = await getUserById(userId)
+  if (!current) return
+  const updated = { ...current, ...updates, updatedAt: new Date().toISOString() }
+  await excelRequest("users", "update", { id: userId, updates: userToRow(updated) })
+  offlineCache.cacheUser(updated)
+}
+
+export async function deleteUser(userId: string): Promise<void> {
+  await excelRequest("users", "delete", { id: userId })
+}
+
+export async function getSubscriptions(): Promise<Subscription[]> {
+  try {
+    const subscriptions = (await listRows("subscriptions")).map(subscriptionFromRow)
+    offlineCache.cacheSubscriptions(subscriptions)
+    return subscriptions
+  } catch {
+    return offlineCache.getCachedSubscriptions()
+  }
+}
+
+export async function getSubscriptionByUserId(userId: string): Promise<Subscription | null> {
+  try {
+    const row = await getRow("subscriptions", userId)
+    if (!row) return offlineCache.getCachedSubscription(userId)
+    const subscription = subscriptionFromRow(row)
+    offlineCache.cacheSubscription(subscription)
+    return subscription
+  } catch {
+    return offlineCache.getCachedSubscription(userId)
+  }
+}
+
+export async function addOrUpdateSubscription(subscription: Subscription): Promise<void> {
+  const existing = await getSubscriptionByUserId(subscription.userId)
+
+  if (existing) {
+    await archiveSubscription(existing)
+    await excelRequest("subscriptions", "update", {
+      id: subscription.userId,
+      updates: subscriptionToRow(subscription),
+    })
+  } else {
+    await excelRequest("subscriptions", "insert", { row: subscriptionToRow(subscription) })
   }
 
-  if (updates.amount !== undefined) updateData.amount = updates.amount
-  if (updates.paymentMethod !== undefined) updateData.payment_method = updates.paymentMethod
-  if (updates.paymentDate !== undefined) updateData.payment_date = updates.paymentDate
-  if (updates.referenceNumber !== undefined) updateData.reference_number = updates.referenceNumber || null
-  if (updates.notes !== undefined) updateData.notes = updates.notes || null
-  if (updates.paymentFor !== undefined) updateData.payment_for = updates.paymentFor
+  offlineCache.cacheSubscription(subscription)
+}
 
-  const { error } = await supabase
-    .from("payment")
-    .update(updateData)
-    .eq("payment_id", paymentId)
+export async function getMedicalHistory(userId: string): Promise<MedicalHistory | null> {
+  const row = await getRow("medical_history", userId)
+  return row ? medicalHistoryFromRow(row) : null
+}
 
-  if (error) console.error("Error updating payment:", error)
+export async function addMedicalHistory(medicalHistory: MedicalHistory): Promise<void> {
+  await excelRequest("medical_history", "insert", { row: medicalHistoryToRow(medicalHistory) })
+}
+
+export async function updateMedicalHistory(
+  userId: string,
+  updates: Partial<MedicalHistory>,
+): Promise<void> {
+  const current = await getMedicalHistory(userId)
+  if (!current) return
+  const updated = { ...current, ...updates, updatedAt: new Date().toISOString() }
+  await excelRequest("medical_history", "update", {
+    id: userId,
+    updates: medicalHistoryToRow(updated),
+  })
+}
+
+export async function getEmergencyContact(userId: string): Promise<EmergencyContact | null> {
+  const row = await getRow("emergency_contacts", userId)
+  return row ? emergencyContactFromRow(row) : null
+}
+
+export async function addEmergencyContact(emergencyContact: EmergencyContact): Promise<void> {
+  await excelRequest("emergency_contacts", "insert", {
+    row: emergencyContactToRow(emergencyContact),
+  })
+}
+
+export async function updateEmergencyContact(
+  userId: string,
+  updates: Partial<EmergencyContact>,
+): Promise<void> {
+  const current = await getEmergencyContact(userId)
+  if (!current) return
+  const updated = { ...current, ...updates, updatedAt: new Date().toISOString() }
+  await excelRequest("emergency_contacts", "update", {
+    id: userId,
+    updates: emergencyContactToRow(updated),
+  })
+}
+
+export async function getLiabilityWaiver(userId: string): Promise<LiabilityWaiver | null> {
+  const row = await getRow("liability_waivers", userId)
+  return row ? liabilityWaiverFromRow(row) : null
+}
+
+export async function addLiabilityWaiver(liabilityWaiver: LiabilityWaiver): Promise<void> {
+  await excelRequest("liability_waivers", "insert", {
+    row: liabilityWaiverToRow(liabilityWaiver),
+  })
+}
+
+export async function getScanLogs(): Promise<ScanLog[]> {
+  return (await listRows("scan_logs")).sort(byDateDesc("timestamp")).map(scanLogFromRow)
+}
+
+export async function addScanLog(log: ScanLog): Promise<void> {
+  if (!log.userId || !log.action || !log.status || !log.timestamp) return
+
+  const row = scanLogToRow(log)
+  try {
+    await excelRequest("scan_logs", "insert", { row })
+  } catch (error) {
+    console.error("Error adding scan log, queuing offline:", error)
+    offlineQueue.enqueue("scan_logs", "insert", row)
+  }
+}
+
+export async function getTodayScanLogs(): Promise<ScanLog[]> {
+  const nowPH = new Date().toLocaleString("en-US", { timeZone: "Asia/Manila" })
+  const todayPH = new Date(nowPH)
+  const startOfDayPH = new Date(todayPH)
+  startOfDayPH.setHours(0, 0, 0, 0)
+  const endOfDayPH = new Date(todayPH)
+  endOfDayPH.setHours(23, 59, 59, 999)
+
+  return (await getScanLogs()).filter((log) => {
+    const timestamp = new Date(log.timestamp).getTime()
+    return timestamp >= startOfDayPH.getTime() && timestamp <= endOfDayPH.getTime()
+  })
+}
+
+export async function getScanLogsByUserId(userId: string): Promise<ScanLog[]> {
+  return (await getScanLogs()).filter((log) => log.userId === userId)
+}
+
+export async function getActiveSessionByUserId(userId: string): Promise<ActiveSession | null> {
+  try {
+    const row = await getRow("active_sessions", userId)
+    if (!row) return offlineCache.getCachedActiveSession(userId)
+    const session = activeSessionFromRow(row)
+    offlineCache.updateCachedSession(userId, session)
+    return session
+  } catch {
+    return offlineCache.getCachedActiveSession(userId)
+  }
+}
+
+export async function getActiveSessions(): Promise<ActiveSession[]> {
+  try {
+    const sessions = (await listRows("active_sessions"))
+      .sort(byDateDesc("check_in_time"))
+      .map(activeSessionFromRow)
+    offlineCache.cacheActiveSessions(sessions)
+    return sessions
+  } catch {
+    return offlineCache.getCachedActiveSessions()
+  }
+}
+
+export async function isUserCheckedIn(userId: string): Promise<boolean> {
+  return !!(await getActiveSessionByUserId(userId))
+}
+
+export async function startSession(session: ActiveSession): Promise<void> {
+  const row = activeSessionToRow(session)
+  try {
+    await excelRequest("active_sessions", "insert", { row })
+  } catch (error) {
+    console.error("Error starting session, queuing offline:", error)
+    offlineQueue.enqueue("active_sessions", "insert", row)
+  }
+  offlineCache.updateCachedSession(session.userId, session)
+}
+
+export async function endSession(userId: string): Promise<ActiveSession | null> {
+  const session = await getActiveSessionByUserId(userId)
+  if (!session) return null
+
+  try {
+    await excelRequest("active_sessions", "delete", { id: userId })
+  } catch (error) {
+    console.error("Error ending session, queuing offline:", error)
+    offlineQueue.enqueue("active_sessions", "delete", {
+      _deleteKey: "user_id",
+      _deleteValue: userId,
+    })
+  }
+
+  offlineCache.updateCachedSession(userId, null)
+  return session
+}
+
+export async function generateUserId(): Promise<string> {
+  const counter = await getUserIdCounter()
+  const currentLastNumber = counter?.lastNumber || 1000
+  const next = currentLastNumber + 1
+
+  if (counter) {
+    await excelRequest("user_id_counter", "update", { id: counter.id, updates: { last_number: next } })
+  } else {
+    await excelRequest("user_id_counter", "insert", { row: { id: 1, last_number: next } })
+  }
+
+  return `BCF-${next}`
+}
+
+export async function getSubscriptionHistory(
+  userId?: string,
+): Promise<SubscriptionHistory[]> {
+  const history = (await listRows("subscription_history"))
+    .sort(byDateDesc("created_at"))
+    .map(subscriptionHistoryFromRow)
+  return userId ? history.filter((item) => item.userId === userId) : history
+}
+
+export async function archiveSubscription(subscription: Subscription): Promise<void> {
+  const archivedStatus = subscription.status === "cancelled" ? "cancelled" : "expired"
+  await excelRequest("subscription_history", "insert", {
+    row: subscriptionHistoryToRow({
+      id: `${subscription.userId}-${Date.now()}`,
+      userId: subscription.userId,
+      startDate: subscription.startDate,
+      endDate: subscription.endDate,
+      status: archivedStatus,
+      createdAt: subscription.createdAt,
+      updatedAt: new Date().toISOString(),
+    }),
+  })
+}
+
+export async function addUsers(users: User[]): Promise<void> {
+  await excelRequest("users", "insert", { rows: users.map(userToRow) })
+  offlineCache.cacheUsers(users)
+}
+
+export async function getAllMedicalHistories(): Promise<MedicalHistory[]> {
+  return (await listRows("medical_history")).map(medicalHistoryFromRow)
+}
+
+export async function getAllEmergencyContacts(): Promise<EmergencyContact[]> {
+  return (await listRows("emergency_contacts")).map(emergencyContactFromRow)
+}
+
+export async function getAllLiabilityWaivers(): Promise<LiabilityWaiver[]> {
+  return (await listRows("liability_waivers")).map(liabilityWaiverFromRow)
+}
+
+export async function getUserIdCounter(): Promise<{ id: number; lastNumber: number } | null> {
+  const row = await getRow("user_id_counter", 1)
+  if (!row) return null
+  return {
+    id: Number(row.id || 1),
+    lastNumber: Number(row.last_number || 1000),
+  }
+}
+
+export async function generatePaymentId(): Promise<string> {
+  const prefix = "PAY"
+  const timestamp = Date.now().toString(36).toUpperCase()
+  const random = Math.random().toString(36).substring(2, 8).toUpperCase()
+  return `${prefix}-${timestamp}-${random}`
+}
+
+export async function getPayments(): Promise<Payment[]> {
+  return (await listRows("payment")).sort(byDateDesc("created_at")).map(paymentFromRow)
+}
+
+export async function getPaymentsByUserId(userId: string): Promise<Payment[]> {
+  return (await getPayments()).filter((payment) => payment.userId === userId)
+}
+
+export async function getPaymentById(paymentId: string): Promise<Payment | null> {
+  const row = await getRow("payment", paymentId)
+  return row ? paymentFromRow(row) : null
+}
+
+export async function addPayment(payment: Payment): Promise<void> {
+  await excelRequest("payment", "insert", { row: paymentToRow(payment) })
+}
+
+export async function updatePayment(paymentId: string, updates: Partial<Payment>): Promise<void> {
+  const current = await getPaymentById(paymentId)
+  if (!current) return
+  const updated = { ...current, ...updates, updatedAt: new Date().toISOString() }
+  await excelRequest("payment", "update", { id: paymentId, updates: paymentToRow(updated) })
 }
 
 export async function deletePayment(paymentId: string): Promise<void> {
-  const { error } = await supabase
-    .from("payment")
-    .delete()
-    .eq("payment_id", paymentId)
-
-  if (error) console.error("Error deleting payment:", error)
+  await excelRequest("payment", "delete", { id: paymentId })
 }
-
-//
-// ==============================
-// EXPORT
-// ==============================
-//
 
 export const storageService = {
   getUsers,

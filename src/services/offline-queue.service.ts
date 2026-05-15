@@ -1,7 +1,5 @@
 "use client"
 
-import { supabase } from "./supabase"
-
 const QUEUE_KEY = "offline_queue"
 const MAX_RETRIES = 5
 
@@ -69,17 +67,30 @@ export function getPendingItems(): OfflineQueueItem[] {
 async function processItem(item: OfflineQueueItem): Promise<boolean> {
   try {
     if (item.operation === "insert") {
-      const { error } = await supabase.from(item.table).insert([item.data])
-      if (error) throw error
+      const response = await fetch("/api/excel-db", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          table: item.table,
+          action: "insert",
+          row: item.data,
+        }),
+      })
+      if (!response.ok) throw new Error(`Insert failed: HTTP ${response.status}`)
     } else if (item.operation === "delete") {
       const deleteKey = item.data._deleteKey as string
       const deleteValue = item.data._deleteValue as string
       if (deleteKey && deleteValue) {
-        const { error } = await supabase
-          .from(item.table)
-          .delete()
-          .eq(deleteKey, deleteValue)
-        if (error) throw error
+        const response = await fetch("/api/excel-db", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            table: item.table,
+            action: "delete",
+            id: deleteValue,
+          }),
+        })
+        if (!response.ok) throw new Error(`Delete failed: HTTP ${response.status}`)
       }
     }
     return true
