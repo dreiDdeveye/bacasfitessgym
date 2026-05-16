@@ -73,6 +73,9 @@ export function MemberList({ users, onUpdate }: MemberListProps) {
   const normalizeValue = (value?: string | null) =>
     (value || "").toLowerCase().replace(/[\s_-]+/g, "")
 
+  const toSearchText = (value: unknown) =>
+    String(value ?? "").toLowerCase()
+
   const getMembershipCategory = (
     subscription: Subscription | null | undefined
   ): "monthly" | "daily" | "walkin" | "unknown" => {
@@ -193,16 +196,16 @@ export function MemberList({ users, onUpdate }: MemberListProps) {
 
   /* ---------------- SEARCH & FILTER ---------------- */
   useEffect(() => {
-    const term = searchTerm.toLowerCase()
+    const term = toSearchText(searchTerm)
     
     setFilteredUsers(
       users.filter((u) => {
         // Search filter
         const matchesSearch =
-          u.name.toLowerCase().includes(term) ||
-          (u.email && u.email.toLowerCase().includes(term)) ||
-          (u.phone && u.phone.toLowerCase().includes(term)) ||
-          u.userId.toLowerCase().includes(term)
+          toSearchText(u.name).includes(term) ||
+          toSearchText(u.email).includes(term) ||
+          toSearchText(u.phone).includes(term) ||
+          toSearchText(u.userId).includes(term)
         
         if (!matchesSearch) return false
         
