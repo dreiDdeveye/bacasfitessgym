@@ -4,6 +4,35 @@ import type { ScanLog, ActiveSession } from "@/src/types"
 import * as storage from "./storage.service"
 import * as subscription from "./subscription.service"
 
+const SCAN_COOLDOWN_SECONDS = 60
+
+type AccessResult = {
+  success: boolean
+  message: string
+  log?: ScanLog
+  duplicateScan?: {
+    userId: string
+    userName: string
+    cooldownLeft: number
+    lastAction: "check-in" | "check-out"
+  }
+}
+
+async function getRecentSuccessfulScan(userId: string): Promise<ScanLog | null> {
+  const logs = await storage.getScanLogsByUserId(userId)
+  return logs.find(
+    (log) =>
+      log.status === "success" &&
+      (log.action === "check-in" || log.action === "check-out") &&
+      !Number.isNaN(new Date(log.timestamp).getTime())
+  ) || null
+}
+
+function getCooldownLeft(lastScan: ScanLog, now = Date.now()): number {
+  const secondsElapsed = (now - new Date(lastScan.timestamp).getTime()) / 1000
+  return Math.max(0, Math.ceil(SCAN_COOLDOWN_SECONDS - secondsElapsed))
+}
+
 /**
  * =========================
  * CHECK-IN
@@ -11,7 +40,7 @@ import * as subscription from "./subscription.service"
  */
 export async function processCheckIn(
   userId: string
-): Promise<{ success: boolean; message: string; log?: ScanLog }> {
+): Promise<AccessResult> {
 
   const validation = await subscription.validateAccess(userId)
 
@@ -87,7 +116,7 @@ export async function processCheckIn(
  */
 export async function processCheckOut(
   userId: string
-): Promise<{ success: boolean; message: string; log?: ScanLog }> {
+): Promise<AccessResult> {
 
   // 🔹 ONLY CARE ABOUT SESSION
   const session = await storage.getActiveSessionByUserId(userId)
@@ -129,7 +158,29 @@ export async function processCheckOut(
  */
 export async function processScan(
   userId: string
-): Promise<{ success: boolean; message: string; log?: ScanLog }> {
+): Promise<AccessResult> {
+
+  const recentScan = await getRecentSuccessfulScan(userId)
+  if (recentScan) {
+    const cooldownLeft = getCooldownLeft(recentScan)
+
+    if (cooldownLeft > 0) {
+      const lastAction = recentScan.action as "check-in" | "check-out"
+      const isCheckedIn = lastAction === "check-in"
+      return {
+        success: false,
+        message: isCheckedIn
+          ? `Already checked in. Please wait ${cooldownLeft}s before scanning again.`
+          : `Already checked out. Please wait ${cooldownLeft}s before scanning again.`,
+        duplicateScan: {
+          userId,
+          userName: recentScan.userName || userId,
+          cooldownLeft,
+          lastAction,
+        },
+      }
+    }
+  }
 
   // ✅ RULE: SESSION ALWAYS WINS
   const activeSession = await storage.getActiveSessionByUserId(userId)

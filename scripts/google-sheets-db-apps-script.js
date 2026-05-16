@@ -5,11 +5,21 @@
  * Sheet, then deploy a new Web App version with access set to "Anyone".
  */
 
-var DB_VERSION = "2026-05-15-all-tables";
+var DB_VERSION = "2026-05-16-active-sessions-tab";
+
+/**
+ * Optional but recommended for standalone Apps Script deployments.
+ *
+ * If the script is not opened from the target Google Sheet via
+ * Extensions > Apps Script, paste the spreadsheet ID here. The ID is the long
+ * value between /d/ and /edit in the Google Sheets URL.
+ */
+var SPREADSHEET_ID = "1GqMS5tfUtrL7M5-3jEnlR-RdMyG5ntMS8ANt0Zqquug";
 
 var TABLES = {
   users: {
-    sheetName: "Users",
+    sheetName: "user_rows",
+    sheetAliases: ["users_rows", "Users"],
     primaryKey: "user_id",
     columns: [
       ["user_id", "User ID"],
@@ -28,7 +38,8 @@ var TABLES = {
     ],
   },
   subscriptions: {
-    sheetName: "Subscriptions",
+    sheetName: "subscription_rows",
+    sheetAliases: ["subscriptions_rows", "Subscriptions"],
     primaryKey: "user_id",
     columns: [
       ["user_id", "User ID"],
@@ -44,7 +55,8 @@ var TABLES = {
     ],
   },
   subscription_history: {
-    sheetName: "Subscription History",
+    sheetName: "subscription_history_rows",
+    sheetAliases: ["Subscription History"],
     primaryKey: "id",
     columns: [
       ["id", "ID"],
@@ -57,7 +69,8 @@ var TABLES = {
     ],
   },
   scan_logs: {
-    sheetName: "Scan Logs",
+    sheetName: "scan_logs_rows",
+    sheetAliases: ["Scan Logs"],
     primaryKey: "id",
     columns: [
       ["id", "ID"],
@@ -70,6 +83,7 @@ var TABLES = {
   },
   active_sessions: {
     sheetName: "Active Sessions",
+    sheetAliases: ["active_sessions_rows"],
     primaryKey: "user_id",
     columns: [
       ["user_id", "User ID"],
@@ -78,7 +92,8 @@ var TABLES = {
     ],
   },
   medical_history: {
-    sheetName: "Medical History",
+    sheetName: "medical_history_rows",
+    sheetAliases: ["Medical History"],
     primaryKey: "user_id",
     columns: [
       ["user_id", "User ID"],
@@ -99,7 +114,8 @@ var TABLES = {
     ],
   },
   emergency_contacts: {
-    sheetName: "Emergency Contacts",
+    sheetName: "emergency_contacts_rows",
+    sheetAliases: ["Emergency Contacts"],
     primaryKey: "user_id",
     columns: [
       ["user_id", "User ID"],
@@ -110,7 +126,8 @@ var TABLES = {
     ],
   },
   liability_waivers: {
-    sheetName: "Liability Waivers",
+    sheetName: "liability_waivers_rows",
+    sheetAliases: ["Liability Waivers"],
     primaryKey: "user_id",
     columns: [
       ["user_id", "User ID"],
@@ -121,7 +138,8 @@ var TABLES = {
     ],
   },
   user_id_counter: {
-    sheetName: "User ID Counter",
+    sheetName: "user_id_rows",
+    sheetAliases: ["user_id_counter_rows", "User ID Counter"],
     primaryKey: "id",
     columns: [
       ["id", "ID"],
@@ -130,7 +148,8 @@ var TABLES = {
     seedRows: [{ id: 1, last_number: 1000 }],
   },
   payment: {
-    sheetName: "Payments",
+    sheetName: "payments_rows",
+    sheetAliases: ["payment_rows", "Payments"],
     primaryKey: "payment_id",
     columns: [
       ["payment_id", "Payment ID"],
@@ -153,10 +172,13 @@ function doGet(e) {
     var action = String((e.parameter.action || "status")).toLowerCase();
 
     if (action === "status") {
+      var statusSpreadsheet = getSpreadsheet();
       return json({
         success: true,
         status: "ok",
         version: DB_VERSION,
+        spreadsheetId: statusSpreadsheet ? statusSpreadsheet.getId() : null,
+        spreadsheetName: statusSpreadsheet ? statusSpreadsheet.getName() : null,
         tables: Object.keys(TABLES),
         message: "BaCasFitness database endpoint is active",
       });
@@ -170,6 +192,16 @@ function doGet(e) {
         version: DB_VERSION,
         tables: initializedTables,
         message: "Database sheets initialized successfully",
+      });
+    }
+
+    if (action === "debug") {
+      return json({
+        success: true,
+        status: "ok",
+        version: DB_VERSION,
+        spreadsheet: getSpreadsheetDebugInfo(),
+        tables: getTablesDebugInfo(),
       });
     }
 
@@ -218,12 +250,12 @@ function doPost(e) {
 
   try {
     var payload = JSON.parse(e.postData.contents || "{}");
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var ss = getSpreadsheet();
 
     if (!ss) {
       return json({
         success: false,
-        message: "Error: Script is not bound to a spreadsheet. Open your Google Sheet, go to Extensions > Apps Script, and paste this code there.",
+        message: "Error: Script is not connected to a spreadsheet. Open your Google Sheet, go to Extensions > Apps Script, or set SPREADSHEET_ID in this script.",
       });
     }
 
@@ -281,10 +313,10 @@ function getRequestedTables(rawTables) {
 }
 
 function ensureSheet(table) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  if (!ss) throw new Error("Script is not bound to a spreadsheet.");
+  var ss = getSpreadsheet();
+  if (!ss) throw new Error("Script is not connected to a spreadsheet.");
 
-  var sheet = ss.getSheetByName(table.sheetName);
+  var sheet = getSheetForTable(ss, table);
   if (!sheet) sheet = ss.insertSheet(table.sheetName);
 
   if (sheet.getLastColumn() === 0 || getHeaders(sheet).length === 0) {
@@ -312,6 +344,34 @@ function ensureSheet(table) {
   }
 
   return sheet;
+}
+
+function getSheetForTable(ss, table) {
+  var names = [table.sheetName].concat(table.sheetAliases || []);
+  var bestSheet = null;
+  var allSheets = ss.getSheets();
+
+  for (var i = 0; i < names.length; i++) {
+    var sheet = findSheetByName(allSheets, names[i]);
+    if (!sheet) continue;
+    if (!bestSheet || sheet.getLastRow() > bestSheet.getLastRow()) {
+      bestSheet = sheet;
+    }
+  }
+
+  return bestSheet;
+}
+
+function findSheetByName(sheets, name) {
+  var normalizedName = normalizeSheetName(name);
+  for (var i = 0; i < sheets.length; i++) {
+    if (normalizeSheetName(sheets[i].getName()) === normalizedName) return sheets[i];
+  }
+  return null;
+}
+
+function normalizeSheetName(name) {
+  return String(name || "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 function initializeTables() {
@@ -512,10 +572,58 @@ function getHeaderColor(sheetName) {
   return colors[sheetName] || "#4285f4";
 }
 
+function getSpreadsheet() {
+  if (SPREADSHEET_ID) return SpreadsheetApp.openById(SPREADSHEET_ID);
+  return SpreadsheetApp.getActiveSpreadsheet();
+}
+
+function getSpreadsheetDebugInfo() {
+  var ss = getSpreadsheet();
+  if (!ss) return null;
+
+  return {
+    id: ss.getId(),
+    name: ss.getName(),
+    sheets: ss.getSheets().map(function(sheet) {
+      return {
+        name: sheet.getName(),
+        lastRow: sheet.getLastRow(),
+        lastColumn: sheet.getLastColumn(),
+      };
+    }),
+  };
+}
+
+function getTablesDebugInfo() {
+  var ss = getSpreadsheet();
+  var info = {};
+
+  Object.keys(TABLES).forEach(function(tableName) {
+    var table = TABLES[tableName];
+    var sheet = getSheetForTable(ss, table);
+    var headers = sheet ? getHeaders(sheet) : [];
+
+    info[tableName] = {
+      expectedSheet: table.sheetName,
+      aliases: table.sheetAliases || [],
+      selectedSheet: sheet ? sheet.getName() : null,
+      lastRow: sheet ? sheet.getLastRow() : 0,
+      lastColumn: sheet ? sheet.getLastColumn() : 0,
+      headers: headers,
+      normalizedHeaders: headers.map(function(header) {
+        return keyForHeader(table, header);
+      }),
+      rowCount: sheet ? readRows(sheet, table).length : 0,
+    };
+  });
+
+  return info;
+}
+
 function testDatabaseConnection() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var ss = getSpreadsheet();
   if (!ss) {
-    Logger.log("ERROR: No active spreadsheet. Make sure this script was created from Extensions > Apps Script in your Google Sheet.");
+    Logger.log("ERROR: No spreadsheet connection. Create the script from Extensions > Apps Script in your Google Sheet, or set SPREADSHEET_ID.");
     return;
   }
   var sheet = ss.getSheetByName("_test");

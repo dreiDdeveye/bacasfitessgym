@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect } from "react"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -56,8 +56,6 @@ import {
   addDays,
 } from "date-fns"
 
-const SCAN_COOLDOWN_SECONDS = 60
-
 // ─── Payment types ────────────────────────────────────────────────────────────
 type PaymentMethod = "cash" | "gcash" | "paymaya" | "banktransfer"
 type PaymentFor    = "membership" | "coaching" | "both" | "other"
@@ -110,12 +108,14 @@ type ScanResult = {
   log?: ScanLog
   subscription?: Subscription | null
   user?: UserType | null
+  duplicateScan?: DuplicateScan
 }
 
 type DuplicateScan = {
   userName: string
   userId: string
   cooldownLeft: number
+  lastAction?: "check-in" | "check-out"
 }
 
 type MembershipType = "monthly" | "daily" | "walkin" | "unknown"
@@ -217,7 +217,6 @@ export function ScannerInterface() {
   const [activeSessions, setActiveSessions] = useState(0)
   const [todayCheckIns, setTodayCheckIns] = useState(0)
   const [totalMembers, setTotalMembers] = useState(0)
-  const scanCooldowns = useRef<Map<string, number>>(new Map())
   const [monthlyCount, setMonthlyCount] = useState(0)
   const [dailyCount, setDailyCount] = useState(0)
   const [walkinCount, setWalkinCount] = useState(0)
@@ -624,20 +623,13 @@ export function ScannerInterface() {
   }
 
   const handleScan = async (code: string) => {
-    const userId      = code.trim()
-    const lastScanTime = scanCooldowns.current.get(userId)
-    const now         = Date.now()
-    if (lastScanTime) {
-      const secondsElapsed = (now - lastScanTime) / 1000
-      if (secondsElapsed < SCAN_COOLDOWN_SECONDS) {
-        const cooldownLeft = Math.ceil(SCAN_COOLDOWN_SECONDS - secondsElapsed)
-        const user = await storageService.getUserById(userId)
-        setDuplicateScan({ userName: user?.name || userId, userId, cooldownLeft })
-        return
-      }
+    const result = await accessService.processScan(code)
+
+    if (result.duplicateScan) {
+      setDuplicateScan(result.duplicateScan)
+      return
     }
 
-    const result = await accessService.processScan(code)
     let subscription: Subscription | null = null
     let user: UserType | null = null
     if (result.log?.userId) {
@@ -653,10 +645,8 @@ export function ScannerInterface() {
       if (user) { openRenewal(user, subscription); return }
     } else if (result.log?.action === "check-in") {
       speakCheckIn(name || "member")
-      scanCooldowns.current.set(userId, now)
     } else if (result.log?.action === "check-out") {
       speakCheckOut(name || "member")
-      scanCooldowns.current.set(userId, now)
     }
 
     setLastScan({ ...result, subscription, user })
@@ -1040,13 +1030,15 @@ export function ScannerInterface() {
                 <ShieldAlert className="w-6 h-6 md:w-8 md:h-8 text-yellow-600" />
               </div>
               <div className="min-w-0">
-                <h2 className="text-xl md:text-2xl font-bold text-yellow-700">Already Scanned</h2>
+                <h2 className="text-xl md:text-2xl font-bold text-yellow-700">
+                  {duplicateScan.lastAction === "check-out" ? "Already Checked Out" : "Already Checked In"}
+                </h2>
                 <p className="text-base md:text-lg font-semibold mt-1 truncate">{duplicateScan.userName}</p>
                 <p className="text-xs md:text-sm text-gray-500 mt-1 truncate">ID: {duplicateScan.userId}</p>
                 <p className="text-xs md:text-sm text-gray-600 mt-3">
-                  This QR code was just scanned. Please wait{" "}
+                  Please wait{" "}
                   <span className="font-bold text-yellow-700">{duplicateScan.cooldownLeft}s</span>{" "}
-                  before scanning again.
+                  before scanning this QR code again.
                 </p>
               </div>
             </div>
