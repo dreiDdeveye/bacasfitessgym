@@ -130,6 +130,16 @@ function formatSummaryRow(key: string, checkIns: number, checkOuts: number, inva
 
 /* ─── Apply scope filter ──────────────────────────────────────────────────── */
 
+function getScanLogKey(log: ScanLog, index: number) {
+  return [
+    log.id || "missing-id",
+    log.userId || "missing-user",
+    log.timestamp || "missing-time",
+    log.action || "missing-action",
+    index,
+  ].join("-")
+}
+
 // Sort raw log rows alphabetically by Name then by Date+Time
 function sortRows(rows: Record<string, any>[]) {
   return rows.sort((a, b) => {
@@ -662,8 +672,8 @@ export function ScanLogs() {
         </Card>
       ) : (
         <div className="space-y-2">
-          {filteredLogs.map(log => (
-            <Card key={log.id} className="p-3 md:p-4">
+          {filteredLogs.map((log, index) => (
+            <Card key={getScanLogKey(log, index)} className="p-3 md:p-4">
               <div className="flex items-center gap-2 md:gap-4">
                 <div className={`p-1.5 md:p-2 rounded-lg shrink-0 ${log.action === "check-in" ? "bg-primary/10" : log.action === "check-out" ? "bg-accent/10" : "bg-destructive/10"}`}>
                   {getActionIcon(log.action)}

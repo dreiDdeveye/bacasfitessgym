@@ -654,7 +654,7 @@ export function ScannerInterface() {
     updateStats()
   }
 
-  const { isScanning } = useQRScanner(handleScan)
+  const { isScanning, isProcessing } = useQRScanner(handleScan)
 
   useEffect(() => {
     updateStats()
@@ -766,13 +766,19 @@ export function ScannerInterface() {
 
       {/* Scanner card */}
       <Card className="p-8 md:p-10 flex flex-col items-center justify-center min-h-[260px] md:min-h-[380px]">
-        <div className={`p-7 md:p-10 rounded-full ${isScanning ? "bg-primary/20 animate-pulse" : "bg-muted"}`}>
-          <ScanLine className="w-12 h-12 md:w-20 md:h-20 text-primary" />
+        <div className={`p-7 md:p-10 rounded-full ${isScanning || isProcessing ? "bg-primary/20 animate-pulse" : "bg-muted"}`}>
+          {isProcessing ? (
+            <RefreshCw className="w-12 h-12 md:w-20 md:h-20 text-primary animate-spin" />
+          ) : (
+            <ScanLine className="w-12 h-12 md:w-20 md:h-20 text-primary" />
+          )}
         </div>
         <h2 className="text-2xl md:text-3xl font-bold mt-8 md:mt-10 text-primary">
-          {isScanning ? "Scanning..." : "Ready to Scan"}
+          {isProcessing ? "Saving Scan..." : isScanning ? "Scanning..." : "Ready to Scan"}
         </h2>
-        <p className="text-muted-foreground mt-3 text-sm md:text-base">Present QR Code to Scanner</p>
+        <p className="text-muted-foreground mt-3 text-sm md:text-base">
+          {isProcessing ? "Please wait until the scan is recorded." : "Present QR Code to Scanner"}
+        </p>
       </Card>
 
       {/* Top stat cards */}

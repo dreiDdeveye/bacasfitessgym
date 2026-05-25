@@ -40,6 +40,21 @@ function getTodayFormatted(): string {
   return `${day}/${month}/${year}`
 }
 
+function formatShortDate(date: Date): string {
+  return `${date.getMonth() + 1}/${date.getDate()}/${date.getFullYear()}`
+}
+
+function getMonthlyRenewalDates(durationMonths: MonthlyDuration) {
+  const start = new Date()
+  const end = new Date(start)
+  end.setMonth(end.getMonth() + durationMonths)
+
+  return {
+    start: formatShortDate(start),
+    end: formatShortDate(end),
+  }
+}
+
 // Parse dd/mm/yyyy string to Date object
 function parseDate(dateStr: string): Date | null {
   const parts = dateStr.split("/")
@@ -140,6 +155,7 @@ export function RenewMemberDialog({
   const isStartDateValid = isValidDateString(startDate)
   const isEndDateValid = isValidDateString(endDate)
   const isEndAfterStart = isStartDateValid && isEndDateValid && compareDateStrings(endDate, startDate) >= 0
+  const monthlyRenewalDates = getMonthlyRenewalDates(selectedDuration)
 
   const handleRenew = async () => {
     if (!userId) return
@@ -293,10 +309,16 @@ export function RenewMemberDialog({
                       </button>
                     ))}
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    Subscription will start today and end in {selectedDuration}{" "}
-                    month{selectedDuration > 1 ? "s" : ""}.
-                  </p>
+                  <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-muted-foreground">Start date</span>
+                      <span className="font-medium">{monthlyRenewalDates.start}</span>
+                    </div>
+                    <div className="mt-1 flex items-center justify-between gap-3">
+                      <span className="text-muted-foreground">End date</span>
+                      <span className="font-medium">{monthlyRenewalDates.end}</span>
+                    </div>
+                  </div>
                 </div>
               )}
 

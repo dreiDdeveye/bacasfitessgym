@@ -21,6 +21,7 @@ interface ScanResult {
 interface QRScannerHook {
   scannedCode: string
   isScanning: boolean
+  isProcessing: boolean
   scanResult: ScanResult | null
   resetScanner: () => void
 }
@@ -28,16 +29,18 @@ interface QRScannerHook {
 /* ---------------- HOOK ---------------- */
 
 export function useQRScanner(
-  onScan: (code: string, result: ScanResult) => void,
+  onScan: (code: string, result: ScanResult) => void | Promise<void>,
   debounceMs = 500
 ): QRScannerHook {
   const [scannedCode, setScannedCode] = useState("")
   const [isScanning, setIsScanning] = useState(false)
+  const [isProcessing, setIsProcessing] = useState(false)
   const [scanResult, setScanResult] = useState<ScanResult | null>(null)
 
   const bufferRef = useRef("")
   const timeoutRef = useRef<NodeJS.Timeout | null>(null)
   const lastScanRef = useRef<number>(0)
+  const isProcessingRef = useRef(false)
 
   /* ---------------- RESET ---------------- */
 
@@ -90,6 +93,11 @@ export function useQRScanner(
 
   useEffect(() => {
     const handleKeyPress = async (e: KeyboardEvent) => {
+      if (isProcessingRef.current) {
+        bufferRef.current = ""
+        return
+      }
+
       // Ignore typing in inputs
       if (
         e.target instanceof HTMLInputElement ||
@@ -111,15 +119,21 @@ export function useQRScanner(
         if (!code || now - lastScanRef.current < debounceMs) return
 
         lastScanRef.current = now
+        isProcessingRef.current = true
         setIsScanning(true)
+        setIsProcessing(true)
         setScannedCode(code)
 
         try {
           const result = await validateSubscription(code)
           setScanResult(result)
-          onScan(code, result)
+          await onScan(code, result)
         } catch (err) {
           console.error("QR scan error:", err)
+        } finally {
+          isProcessingRef.current = false
+          setIsProcessing(false)
+          setIsScanning(false)
         }
 
         setTimeout(resetScanner, 2000)
@@ -149,6 +163,7 @@ export function useQRScanner(
   return {
     scannedCode,
     isScanning,
+    isProcessing,
     scanResult,
     resetScanner,
   }

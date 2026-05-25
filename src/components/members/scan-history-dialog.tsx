@@ -20,6 +20,16 @@ interface ScanHistoryDialogProps {
   onOpenChange: (open: boolean) => void
 }
 
+function getScanLogKey(log: ScanLog, index: number) {
+  return [
+    log.id || "missing-id",
+    log.userId || "missing-user",
+    log.timestamp || "missing-time",
+    log.action || "missing-action",
+    index,
+  ].join("-")
+}
+
 export function ScanHistoryDialog({
   userId,
   userName,
@@ -64,9 +74,9 @@ export function ScanHistoryDialog({
         ) : (
           <div className="space-y-3 max-h-[65vh] overflow-y-auto pr-2">
             {scanLogs.length > 0 ? (
-              scanLogs.map((log) => (
+              scanLogs.map((log, index) => (
                 <div
-                  key={log.id}
+                  key={getScanLogKey(log, index)}
                   className="border rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
                 >
                   <div className="flex items-center gap-3">
