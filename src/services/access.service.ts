@@ -77,7 +77,7 @@ export async function processCheckIn(
   if (existingSession) {
     return {
       success: false,
-      message: "User is already checked in",
+      message: "Member is already timed in. Select Time Out to check out.",
     }
   }
 
@@ -125,7 +125,7 @@ export async function processCheckOut(
   if (!session) {
     return {
       success: false,
-      message: "User is not checked in",
+      message: "Member is not timed in yet. Select Time In first.",
     }
   }
 
