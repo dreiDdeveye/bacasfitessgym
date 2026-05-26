@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -145,6 +145,7 @@ type TopSubscriptionTypeGroup = {
 type HoursView        = "today" | "week" | "month" | "year" | "all"
 type StatusFilter     = "all" | "active" | "expired"
 type MembershipFilter = "all" | "monthly" | "daily" | "walkin"
+type ScanAction       = "check-in" | "check-out"
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const generateId = () =>
@@ -235,6 +236,8 @@ export function ScannerInterface() {
   )
   const [pendingSyncCount, setPendingSyncCount] = useState(0)
   const [renewal, setRenewal] = useState<RenewalState | null>(null)
+  const [selectedScanAction, setSelectedScanAction] = useState<ScanAction | null>(null)
+  const [showScannerDialog, setShowScannerDialog] = useState(false)
 
   // ── Renewal helpers ──────────────────────────────────────────────────────
   const emptyPaymentForm = (): PaymentForm => ({
@@ -622,8 +625,13 @@ export function ScannerInterface() {
     }
   }
 
-  const handleScan = async (code: string) => {
-    const result = await accessService.processScan(code)
+  const handleScan = useCallback(async (code: string) => {
+    if (!selectedScanAction) return
+
+    const result =
+      selectedScanAction === "check-in"
+        ? await accessService.processCheckIn(code)
+        : await accessService.processCheckOut(code)
 
     if (result.duplicateScan) {
       setDuplicateScan(result.duplicateScan)
@@ -652,9 +660,38 @@ export function ScannerInterface() {
     setLastScan({ ...result, subscription, user })
     setPendingSyncCount(offlineQueue.getPendingCount())
     updateStats()
+  }, [selectedScanAction])
+
+  const scannerEnabled = Boolean(selectedScanAction && showScannerDialog)
+  const { isScanning, isProcessing } = useQRScanner(handleScan, 500, scannerEnabled)
+  const scanActionLabel =
+    selectedScanAction === "check-in"
+      ? "Time In"
+      : selectedScanAction === "check-out"
+        ? "Time Out"
+        : "Scan"
+  const scannerStatusTitle = isProcessing
+    ? "Saving Scan..."
+    : isScanning
+      ? "Scanning..."
+      : scannerEnabled
+        ? "Ready to Scan"
+        : "Select Time In or Time Out"
+  const scannerStatusText = isProcessing
+    ? "Please wait until the scan is recorded. The scanner is locked."
+    : scannerEnabled
+      ? "Present QR Code to Scanner"
+      : "Choose an option before scanning a QR code."
+
+  const openScannerDialog = (action: ScanAction) => {
+    setSelectedScanAction(action)
+    setShowScannerDialog(true)
   }
 
-  const { isScanning, isProcessing } = useQRScanner(handleScan)
+  const handleScannerDialogOpenChange = (open: boolean) => {
+    if (isProcessing) return
+    setShowScannerDialog(open)
+  }
 
   useEffect(() => {
     updateStats()
@@ -766,20 +803,76 @@ export function ScannerInterface() {
 
       {/* Scanner card */}
       <Card className="p-8 md:p-10 flex flex-col items-center justify-center min-h-[260px] md:min-h-[380px]">
-        <div className={`p-7 md:p-10 rounded-full ${isScanning || isProcessing ? "bg-primary/20 animate-pulse" : "bg-muted"}`}>
-          {isProcessing ? (
-            <RefreshCw className="w-12 h-12 md:w-20 md:h-20 text-primary animate-spin" />
-          ) : (
-            <ScanLine className="w-12 h-12 md:w-20 md:h-20 text-primary" />
-          )}
+        <div className="grid w-full max-w-md grid-cols-2 gap-3 mb-8">
+          <Button
+            type="button"
+            variant={selectedScanAction === "check-in" ? "default" : "outline"}
+            className="h-12"
+            onClick={() => openScannerDialog("check-in")}
+            disabled={isProcessing}
+          >
+            <CheckCircle2 className="w-4 h-4 mr-2" />
+            Time In
+          </Button>
+          <Button
+            type="button"
+            variant={selectedScanAction === "check-out" ? "default" : "outline"}
+            className="h-12"
+            onClick={() => openScannerDialog("check-out")}
+            disabled={isProcessing}
+          >
+            <XCircle className="w-4 h-4 mr-2" />
+            Time Out
+          </Button>
+        </div>
+
+        <div className="p-7 md:p-10 rounded-full bg-muted/60">
+          <ScanLine className="w-12 h-12 md:w-20 md:h-20 text-muted-foreground" />
         </div>
         <h2 className="text-2xl md:text-3xl font-bold mt-8 md:mt-10 text-primary">
-          {isProcessing ? "Saving Scan..." : isScanning ? "Scanning..." : "Ready to Scan"}
+          Select Time In or Time Out
         </h2>
         <p className="text-muted-foreground mt-3 text-sm md:text-base">
-          {isProcessing ? "Please wait until the scan is recorded." : "Present QR Code to Scanner"}
+          Choose an option to open the scanner.
         </p>
       </Card>
+
+      <Dialog open={showScannerDialog} onOpenChange={handleScannerDialogOpenChange}>
+        <DialogContent className="w-[95vw] max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {selectedScanAction === "check-in" ? (
+                <CheckCircle2 className="w-5 h-5 text-primary" />
+              ) : (
+                <XCircle className="w-5 h-5 text-primary" />
+              )}
+              {scanActionLabel} Scanner
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="flex flex-col items-center justify-center py-8">
+            <div className={`p-8 md:p-10 rounded-full ${isScanning || isProcessing ? "bg-primary/20 animate-pulse" : "bg-muted"}`}>
+              {isProcessing ? (
+                <RefreshCw className="w-14 h-14 md:w-20 md:h-20 text-primary animate-spin" />
+              ) : (
+                <ScanLine className="w-14 h-14 md:w-20 md:h-20 text-primary" />
+              )}
+            </div>
+
+            <h2 className="text-2xl md:text-3xl font-bold mt-8 text-primary text-center">
+              {scannerStatusTitle}
+            </h2>
+            <p className="text-muted-foreground mt-3 text-sm md:text-base text-center">
+              {scannerStatusText}
+            </p>
+            {isProcessing && (
+              <div className="mt-5 rounded-lg border border-primary/30 bg-primary/10 px-4 py-3 text-sm text-primary">
+                Loading... please wait. New QR scans are blocked until this finishes.
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Top stat cards */}
       <div className="grid grid-cols-3 gap-2 md:gap-4">

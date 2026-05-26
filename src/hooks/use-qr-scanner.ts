@@ -30,7 +30,8 @@ interface QRScannerHook {
 
 export function useQRScanner(
   onScan: (code: string, result: ScanResult) => void | Promise<void>,
-  debounceMs = 500
+  debounceMs = 500,
+  isEnabled = true
 ): QRScannerHook {
   const [scannedCode, setScannedCode] = useState("")
   const [isScanning, setIsScanning] = useState(false)
@@ -93,6 +94,11 @@ export function useQRScanner(
 
   useEffect(() => {
     const handleKeyPress = async (e: KeyboardEvent) => {
+      if (!isEnabled) {
+        bufferRef.current = ""
+        return
+      }
+
       if (isProcessingRef.current) {
         bufferRef.current = ""
         return
@@ -156,7 +162,7 @@ export function useQRScanner(
       window.removeEventListener("keypress", handleKeyPress)
       if (timeoutRef.current) clearTimeout(timeoutRef.current)
     }
-  }, [onScan, debounceMs, resetScanner])
+  }, [onScan, debounceMs, resetScanner, isEnabled])
 
   /* ---------------- RETURN ---------------- */
 
